@@ -1,5 +1,6 @@
 ﻿package com.lunar.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -52,10 +54,15 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lunar.data.AuthSession
 import com.lunar.data.BaziResponse
 import com.lunar.data.DayunItem
+import com.lunar.data.RecordSaveRequest
 import com.lunar.data.SolarRequest
+import com.lunar.data.appJson
 import com.lunar.data.fetchBaziCalculate
+import com.lunar.data.saveChartRecord
+import com.lunar.data.userMessage
 import com.lunar.ui.theme.BrownText
 import com.lunar.ui.theme.DarkGray
 import com.lunar.ui.theme.DarkText
@@ -71,17 +78,22 @@ import com.lunar.ui.theme.RedTitle
 import com.lunar.ui.theme.LunarAppTheme
 import java.util.Calendar
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 
 @Composable
 fun ChartRoute(
     result: BaziResponse?,
+    authSession: AuthSession?,
     onResult: (BaziResponse) -> Unit,
     onReset: () -> Unit,
+    onRequireLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (result == null) {
         ChartFormScreen(
+            authSession = authSession,
             onResult = onResult,
+            onRequireLogin = onRequireLogin,
             modifier = modifier
         )
     } else {
@@ -95,13 +107,16 @@ fun ChartRoute(
 
 @Composable
 fun ChartFormScreen(
+    authSession: AuthSession? = null,
     onResult: (BaziResponse) -> Unit,
+    onRequireLogin: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val now = remember { Calendar.getInstance() }
     var name by rememberSaveable { mutableStateOf("") }
     var calendarType by rememberSaveable { mutableStateOf("公历排盘") }
-    var gender by rememberSaveable { mutableStateOf("男") }
+    var gender by rememberSaveable { mutableStateOf("女") }
     var shouldSave by rememberSaveable { mutableStateOf("保存") }
     var year by rememberSaveable { mutableStateOf(now.get(Calendar.YEAR)) }
     var month by rememberSaveable { mutableStateOf(now.get(Calendar.MONTH) + 1) }
@@ -147,8 +162,8 @@ fun ChartFormScreen(
                 CompactSelect(minute, (0..59).toList(), "分") { minute = it }
             }
             FormRow(label = "命主性别:") {
-                CompactRadio("男", gender, onSelect = { gender = it })
                 CompactRadio("女", gender, onSelect = { gender = it })
+                CompactRadio("男", gender, onSelect = { gender = it })
                 Text("（排盘结果男女有别，请正确选择）", color = RedTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             FormRow(label = "是否保存:") {
@@ -165,13 +180,32 @@ fun ChartFormScreen(
                     isLoading = true
                     errorMessage = null
                     runCatching {
-                        fetchBaziCalculate(
+                        val response = fetchBaziCalculate(
                             name = name,
-                            sex = if (gender == "男") 0 else 1,
+                            sex = if (gender == "女") 0 else 1,
                             solar = SolarRequest(year, month, day, hour, minute)
                         )
+                        if (shouldSave == "保存") {
+                            val activeSession = authSession
+                            if (activeSession == null) {
+                                Toast.makeText(context, "请先登录后保存记录", Toast.LENGTH_SHORT).show()
+                            } else {
+                                saveChartRecord(
+                                    token = activeSession.token,
+                                    request = RecordSaveRequest(
+                                        title = buildRecordTitle(name, year, month, day),
+                                        chartName = name.ifBlank { "未命名" },
+                                        gender = gender,
+                                        birthTime = buildBirthTime(year, month, day, hour, minute),
+                                        resultJson = appJson.encodeToString(response)
+                                    )
+                                )
+                                Toast.makeText(context, "排盘记录已保存", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        response
                     }.onSuccess(onResult)
-                        .onFailure { errorMessage = it.message ?: "排盘失败，请稍后再试" }
+                        .onFailure { errorMessage = it.userMessage() }
                     isLoading = false
                 }
             },
@@ -203,6 +237,14 @@ fun ChartFormScreen(
         Spacer(modifier = Modifier.height(16.dp))
         HomeLinks()
     }
+}
+
+private fun buildRecordTitle(name: String, year: Int, month: Int, day: Int): String {
+    return "${name.ifBlank { "未命名" }} $year-$month-$day"
+}
+
+private fun buildBirthTime(year: Int, month: Int, day: Int, hour: Int, minute: Int): String {
+    return "%04d-%02d-%02d %02d:%02d".format(year, month, day, hour, minute)
 }
 
 @Composable

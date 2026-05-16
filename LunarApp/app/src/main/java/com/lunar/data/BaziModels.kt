@@ -1,5 +1,17 @@
 package com.lunar.data
 
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class SolarRequest(
+    val year: Int,
+    val month: Int,
+    val day: Int,
+    val hour: Int,
+    val minute: Int
+)
+
+@Serializable
 data class BaziResponse(
     val basicInfo: BasicInfo,
     val bazi: Bazi,
@@ -10,6 +22,7 @@ data class BaziResponse(
     val shensha: Shensha
 )
 
+@Serializable
 data class BasicInfo(
     val name: String,
     val gender: String,
@@ -23,31 +36,37 @@ data class BasicInfo(
     val wuxingName: List<WuxingName>
 )
 
+@Serializable
 data class SolarTerms(
     val jie: String,
     val qi: String
 )
 
+@Serializable
 data class StemBranchInfo(
     val value: String,
     val nayin: String
 )
 
+@Serializable
 data class StartYun(
     val after: String,
     val startTime: String,
     val rule: String
 )
 
+@Serializable
 data class WuxingName(
     val element: String,
     val char: String
 )
 
+@Serializable
 data class Bazi(
     val pillars: Pillars
 )
 
+@Serializable
 data class Pillars(
     val year: Pillar,
     val month: Pillar,
@@ -55,6 +74,7 @@ data class Pillars(
     val hour: Pillar
 )
 
+@Serializable
 data class Pillar(
     val tiangan: String,
     val dizhi: String,
@@ -68,21 +88,25 @@ data class Pillar(
     val dizhiNote: String
 )
 
+@Serializable
 data class BoneWeight(
     val value: String,
     val comment: String
 )
 
+@Serializable
 data class Dayun(
     val items: List<DayunItem>
 )
 
+@Serializable
 data class DayunItem(
     val age: Int,
     val year: Int,
     val ganzhi: String
 )
 
+@Serializable
 data class DayunDetail(
     val tianganTenGod: List<String>,
     val dizhiTenGod: List<List<String>>,
@@ -90,12 +114,14 @@ data class DayunDetail(
     val endYear: List<Int>
 )
 
+@Serializable
 data class Xiaoyun(
     val tenGod: List<String>,
     val ganzhi: List<String>,
     val age: List<Int>
 )
 
+@Serializable
 data class Shensha(
     val dayunShensha: List<String>,
     val liunianShensha: List<String>,
