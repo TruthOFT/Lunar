@@ -31,6 +31,7 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,9 +45,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
@@ -56,11 +59,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lunar.data.AuthSession
 import com.lunar.data.BaziResponse
+import com.lunar.data.BaziTreeItem
+import com.lunar.data.ChartResult
+import com.lunar.data.ChartLuckItem
 import com.lunar.data.DayunItem
 import com.lunar.data.RecordSaveRequest
 import com.lunar.data.SolarRequest
 import com.lunar.data.appJson
 import com.lunar.data.fetchBaziCalculate
+import com.lunar.data.fetchBaziTreeItems
 import com.lunar.data.saveChartRecord
 import com.lunar.data.userMessage
 import com.lunar.ui.theme.BrownText
@@ -82,9 +89,9 @@ import kotlinx.serialization.encodeToString
 
 @Composable
 fun ChartRoute(
-    result: BaziResponse?,
+    result: ChartResult?,
     authSession: AuthSession?,
-    onResult: (BaziResponse) -> Unit,
+    onResult: (ChartResult) -> Unit,
     onReset: () -> Unit,
     onRequireLogin: () -> Unit,
     modifier: Modifier = Modifier
@@ -108,7 +115,7 @@ fun ChartRoute(
 @Composable
 fun ChartFormScreen(
     authSession: AuthSession? = null,
-    onResult: (BaziResponse) -> Unit,
+    onResult: (ChartResult) -> Unit,
     onRequireLogin: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -183,6 +190,7 @@ fun ChartFormScreen(
                         val response = fetchBaziCalculate(
                             name = name,
                             sex = if (gender == "女") 0 else 1,
+                            dateType = if (calendarType == "农历排盘") "农历" else "公历",
                             solar = SolarRequest(year, month, day, hour, minute)
                         )
                         if (shouldSave == "保存") {
@@ -249,7 +257,7 @@ private fun buildBirthTime(year: Int, month: Int, day: Int, hour: Int, minute: I
 
 @Composable
 fun BaziResultScreen(
-    result: BaziResponse,
+    result: ChartResult,
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -270,22 +278,11 @@ fun BaziResultScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text("八字排盘结果:", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = DarkText)
-            BasicInfoBlock(result)
-            PillarTable(result)
-            NoteBands(result)
+            RawResultHeader(result)
+            InteractiveTreePanel(result)
         }
 
         Spacer(modifier = Modifier.height(18.dp))
-        PromoBanner(modifier = Modifier.width(320.dp).height(135.dp))
-        Spacer(modifier = Modifier.height(14.dp))
-
-        DayunGridFromResponse(result)
-        ShenshaRows(result)
-        Spacer(modifier = Modifier.height(20.dp))
-        PromoBanner(modifier = Modifier.width(320.dp).height(135.dp))
-        Spacer(modifier = Modifier.height(14.dp))
-        XiaoyunBlock(result)
-
         TextButton(
             onClick = onReset,
             colors = ButtonDefaults.textButtonColors(containerColor = Color(0xFFFF6565), contentColor = Color.White),
@@ -296,6 +293,758 @@ fun BaziResultScreen(
             Text("重新排盘", fontSize = 18.sp)
         }
         Spacer(modifier = Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun RawResultHeader(result: ChartResult) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        RichLine("姓名: ", result.name, "    性别: ", result.gender)
+        RichLine("历法: ", result.dateType, "    出生: ", result.birthTime)
+    }
+}
+
+@Composable
+private fun RawResultText(text: String) {
+    Text(
+        text = text,
+        color = DarkText,
+        fontSize = 13.sp,
+        lineHeight = 19.sp,
+        fontFamily = FontFamily.Monospace,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFFFBF3))
+            .border(0.5.dp, Color(0xFFD0A77A))
+            .padding(10.dp)
+    )
+}
+
+@Composable
+private fun InteractiveTreePanel(result: ChartResult) {
+    val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+    val currentMonth = remember { Calendar.getInstance().get(Calendar.MONTH) + 1 }
+    var selectedLuckStart by rememberSaveable(result.birthTime) {
+        mutableStateOf(result.luckItems.findLuckForYear(currentYear)?.startYear ?: result.luckItems.firstOrNull()?.startYear)
+    }
+    var selectedYear by rememberSaveable(result.birthTime) {
+        mutableStateOf(result.treeItems.firstOrNull { it.year == currentYear }?.year ?: result.treeItems.firstOrNull()?.year)
+    }
+    var selectedMonth by rememberSaveable(result.birthTime) { mutableStateOf<Int?>(null) }
+    var selectedDay by rememberSaveable(result.birthTime) { mutableStateOf<Int?>(null) }
+    var monthItems by remember(result.birthTime) { mutableStateOf<List<BaziTreeItem>>(emptyList()) }
+    var dayItems by remember(result.birthTime) { mutableStateOf<List<BaziTreeItem>>(emptyList()) }
+    var loadingMonths by rememberSaveable(result.birthTime) { mutableStateOf(false) }
+    var loadingDays by rememberSaveable(result.birthTime) { mutableStateOf(false) }
+    var errorMessage by rememberSaveable(result.birthTime) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(result.birthTime, selectedYear) {
+        val year = selectedYear ?: return@LaunchedEffect
+        loadingMonths = true
+        errorMessage = null
+        monthItems = emptyList()
+        dayItems = emptyList()
+        selectedMonth = null
+        selectedDay = null
+        runCatching {
+            fetchBaziTreeItems(
+                gender = result.gender,
+                dateType = result.dateType,
+                birthTime = result.birthTime,
+                queryYear = year
+            )
+        }.onSuccess { items ->
+            monthItems = items
+            selectedMonth = items.firstOrNull { it.month == currentMonth }?.month ?: items.firstOrNull()?.month
+        }.onFailure {
+            errorMessage = it.userMessage()
+        }
+        loadingMonths = false
+    }
+
+    LaunchedEffect(result.birthTime, selectedYear, selectedMonth) {
+        val year = selectedYear ?: return@LaunchedEffect
+        val month = selectedMonth ?: return@LaunchedEffect
+        loadingDays = true
+        errorMessage = null
+        dayItems = emptyList()
+        selectedDay = null
+        runCatching {
+            fetchBaziTreeItems(
+                gender = result.gender,
+                dateType = result.dateType,
+                birthTime = result.birthTime,
+                queryYear = year,
+                queryMonth = month
+            )
+        }.onSuccess { items ->
+            dayItems = items
+            selectedDay = items.firstOrNull()?.idx
+        }.onFailure {
+            errorMessage = it.userMessage()
+        }
+        loadingDays = false
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        errorMessage?.let {
+            Text(it, color = RedTitle, fontSize = 13.sp)
+        }
+
+        LinkedDetailGrid(
+            result = result,
+            yearItem = result.treeItems.firstOrNull { it.year == selectedYear },
+            monthItem = monthItems.firstOrNull { it.month == selectedMonth },
+            dayItem = dayItems.firstOrNull { it.idx == selectedDay },
+            monthItems = monthItems,
+            dayItems = dayItems,
+            selectedLuckStart = selectedLuckStart,
+            selectedYear = selectedYear,
+            selectedMonth = selectedMonth,
+            selectedDay = selectedDay,
+            loadingMonths = loadingMonths,
+            loadingDays = loadingDays,
+            onLuckSelected = { luck ->
+                selectedLuckStart = luck.startYear
+                selectedYear = if (currentYear in luck.startYear until (luck.startYear + 10)) currentYear else luck.startYear
+            },
+            onYearSelected = { item -> selectedYear = item.year },
+            onMonthSelected = { item -> selectedMonth = item.month },
+            onDaySelected = { item -> selectedDay = item.idx }
+        )
+    }
+}
+
+@Composable
+private fun TreeSectionTitle(text: String) {
+    Text(text, color = RedTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun TreeLoading() {
+    Row(
+        modifier = Modifier.fillMaxWidth().height(54.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = RedTitle)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("加载中", color = DarkText, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun TreeEmpty(text: String) {
+    Box(
+        modifier = Modifier.fillMaxWidth().height(46.dp).background(LightGray),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, color = DarkText, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun TreeItemStrip(
+    items: List<BaziTreeItem>,
+    selectedKey: Int?,
+    keyOf: (BaziTreeItem) -> Int?,
+    titleOf: (BaziTreeItem) -> String,
+    subtitleOf: (BaziTreeItem) -> String,
+    onSelect: (BaziTreeItem) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        items.forEach { item ->
+            val selected = keyOf(item) == selectedKey
+            Column(
+                modifier = Modifier
+                    .width(70.dp)
+                    .height(58.dp)
+                    .background(if (selected) Color(0xFFE6B67A) else LightGray)
+                    .border(0.5.dp, if (selected) RedTitle else Color(0xFFD0D0D0))
+                    .clickable { onSelect(item) }
+                    .padding(4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(titleOf(item), color = DarkText, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(subtitleOf(item), color = RedTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinkedDetailGrid(
+    result: ChartResult,
+    yearItem: BaziTreeItem?,
+    monthItem: BaziTreeItem?,
+    dayItem: BaziTreeItem?,
+    monthItems: List<BaziTreeItem>,
+    dayItems: List<BaziTreeItem>,
+    selectedLuckStart: Int?,
+    selectedYear: Int?,
+    selectedMonth: Int?,
+    selectedDay: Int?,
+    loadingMonths: Boolean,
+    loadingDays: Boolean,
+    onLuckSelected: (ChartLuckItem) -> Unit,
+    onYearSelected: (BaziTreeItem) -> Unit,
+    onMonthSelected: (BaziTreeItem) -> Unit,
+    onDaySelected: (BaziTreeItem) -> Unit
+) {
+    val configuration = LocalConfiguration.current
+    val screenWidth = configuration.screenWidthDp.dp
+    val topLabelWidth = 45.dp
+    val topCellWidth = ((screenWidth - 20.dp - topLabelWidth) / 8).coerceIn(38.dp, 64.dp)
+    val timelineLabelWidth = 45.dp
+    val timelineCellWidth = ((screenWidth - 20.dp - timelineLabelWidth) / 10).coerceIn(30.dp, 52.dp)
+    val monthCellWidth = ((screenWidth - 20.dp - timelineLabelWidth) / 12).coerceIn(24.dp, 34.dp)
+    val dayCellWidth = monthCellWidth
+    val luckItem = result.luckItems.firstOrNull { it.startYear == selectedLuckStart }
+        ?: result.luckItems.findLuckForYear(yearItem?.year)
+    val pillars = listOf(
+        result.pillars.year,
+        result.pillars.month,
+        result.pillars.day,
+        result.pillars.hour
+    )
+    val headers = listOf("日期", "流日", "流月", "流年", "大运", "年柱", "月柱", "日柱", "时柱")
+    val dateRow = listOf(
+        "岁年",
+        dayItem.treeLabel(),
+        monthItem.treeLabel(),
+        yearItem.treeLabel(),
+        luckItem?.let { "${it.age}岁\n${it.startYear}" }.orEmpty(),
+    ) + List(4) { "*" }
+    val ganRow = listOf(
+        "天干",
+        dayItem.gan(),
+        monthItem.gan(),
+        yearItem.gan(),
+        luckItem.gan(),
+    ) + pillars.map { it.gan }
+    val zhiRow = listOf(
+        "地支",
+        dayItem.zhi(),
+        monthItem.zhi(),
+        yearItem.zhi(),
+        luckItem.zhi(),
+    ) + pillars.map { it.zhi }
+    val godRow = listOf(
+        "十神",
+        dayItem.godText(),
+        monthItem.godText(),
+        yearItem.godText(),
+        luckItem?.god.orEmpty(),
+    ) + pillars.map { it.ganGod }
+    val nayinRow = listOf(
+        "纳音",
+        dayItem?.nayin.orEmpty(),
+        monthItem?.nayin.orEmpty(),
+        yearItem?.nayin.orEmpty(),
+        luckItem?.state.orEmpty(),
+    ) + pillars.map { it.nayin }
+    val kongWangRow = listOf(
+        "空亡",
+        calcXunKong(dayItem?.gz),
+        calcXunKong(monthItem?.gz),
+        calcXunKong(yearItem?.gz),
+        calcXunKong(luckItem?.gz),
+    ) + listOf(
+        calcXunKong(result.pillars.year.gz()),
+        calcXunKong(result.pillars.month.gz()),
+        calcXunKong(result.pillars.day.gz()),
+        calcXunKong(result.pillars.hour.gz())
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFFD0A77A))
+    ) {
+        TableRow(
+            cells = headers,
+            background = DarkGray,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = dateRow,
+            background = MidGray,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = ganRow,
+            background = LightGray,
+            bigIndexes = (1..8).toSet(),
+            colors = listOf(DarkText) + ganRow.drop(1).map { stemColor(it) },
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = zhiRow,
+            background = MidGray,
+            bigIndexes = (1..8).toSet(),
+            colors = listOf(DarkText) + zhiRow.drop(1).map { stemColor(it) },
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = nayinRow,
+            background = LightGray,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = kongWangRow,
+            background = MidGray,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = godRow,
+            background = LightGray,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = listOf("藏干", dayItem.hiddenText(), monthItem.hiddenText(), yearItem.hiddenText(), "") + pillars.map { it.hidden.joinToString("\n") },
+            background = MidGray,
+            height = 78.dp,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+        TableRow(
+            cells = listOf("神煞", dayItem.starText(), monthItem.starText(), yearItem.starText(), luckItem?.stars.orEmpty()) + List(4) { "" },
+            background = LightGray,
+            height = 96.dp,
+            cellWidth = topCellWidth,
+            labelWidth = topLabelWidth
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        TimelineRows(
+            luckItems = result.luckItems,
+            yearItems = result.treeItems,
+            monthItems = monthItems,
+            dayItems = dayItems,
+            tianganNote = calcLiuyi(ganRow.drop(1), tianganOnly = true),
+            dizhiNote = calcLiuyi(zhiRow.drop(1), tianganOnly = false),
+            dayunShensha = luckItem?.stars.orEmpty(),
+            wenChangText = buildWenChangText(result.pillars.day.gan),
+            timelineLabelWidth = timelineLabelWidth,
+            timelineCellWidth = timelineCellWidth,
+            monthCellWidth = monthCellWidth,
+            dayCellWidth = dayCellWidth,
+            selectedLuckStart = selectedLuckStart,
+            selectedYear = selectedYear,
+            selectedMonth = selectedMonth,
+            selectedDay = selectedDay,
+            loadingMonths = loadingMonths,
+            loadingDays = loadingDays,
+            onLuckSelected = onLuckSelected,
+            onYearSelected = onYearSelected,
+            onMonthSelected = onMonthSelected,
+            onDaySelected = onDaySelected
+        )
+    }
+}
+
+private fun BaziTreeItem?.treeLabel(): String {
+    val item = this ?: return ""
+    return when {
+        item.year != null -> "${item.age ?: "-"}岁\n${item.year}"
+        item.month != null -> item.name ?: "${item.month}月"
+        item.idx != null -> "${item.name ?: ""}\n${item.idx}日"
+        else -> item.name.orEmpty()
+    }
+}
+
+private fun BaziTreeItem?.hiddenText(): String = this?.cangGanSS?.joinToString("\n").orEmpty()
+private fun BaziTreeItem?.starText(): String = this?.sx?.joinToString("\n").orEmpty()
+private fun yearAgeText(item: BaziTreeItem): String {
+    val age = item.age?.let { "${it}岁" }.orEmpty()
+    val year = item.year?.toString().orEmpty()
+    return listOf(age, year).filter { it.isNotBlank() }.joinToString("\n")
+}
+
+@Composable
+private fun TimelineRows(
+    luckItems: List<ChartLuckItem>,
+    yearItems: List<BaziTreeItem>,
+    monthItems: List<BaziTreeItem>,
+    dayItems: List<BaziTreeItem>,
+    tianganNote: String,
+    dizhiNote: String,
+    dayunShensha: String,
+    wenChangText: String,
+    timelineLabelWidth: Dp,
+    timelineCellWidth: Dp,
+    monthCellWidth: Dp,
+    dayCellWidth: Dp,
+    selectedLuckStart: Int?,
+    selectedYear: Int?,
+    selectedMonth: Int?,
+    selectedDay: Int?,
+    loadingMonths: Boolean,
+    loadingDays: Boolean,
+    onLuckSelected: (ChartLuckItem) -> Unit,
+    onYearSelected: (BaziTreeItem) -> Unit,
+    onMonthSelected: (BaziTreeItem) -> Unit,
+    onDaySelected: (BaziTreeItem) -> Unit
+) {
+    val terms = listOf("立春", "惊蛰", "清明", "立夏", "芒种", "小暑", "立秋", "白露", "寒露", "立冬", "大雪", "小寒")
+    val visibleYears = selectedLuckStart
+        ?.let { start -> (start until start + 10).mapNotNull { year -> yearItems.firstOrNull { it.year == year } } }
+        .orEmpty()
+        .ifEmpty { yearItems.take(10) }
+    ClickableTimelineRow(
+        label = "",
+        items = luckItems.take(9),
+        selected = { it.startYear == selectedLuckStart },
+        text = { "${it.age}岁\n${it.startYear}" },
+        onClick = onLuckSelected,
+        background = MidGray,
+        height = 56.dp,
+        cellWidth = timelineCellWidth,
+        labelWidth = timelineLabelWidth
+    )
+    ClickableTimelineRow(
+        label = "大运",
+        items = luckItems.take(9),
+        selected = { it.startYear == selectedLuckStart },
+        text = { it.gz },
+        onClick = onLuckSelected,
+        background = LightGray,
+        cellWidth = timelineCellWidth,
+        labelWidth = timelineLabelWidth
+    )
+    ClickableTimelineRow(
+        label = "",
+        items = visibleYears,
+        selected = { it.year == selectedYear },
+        text = { yearAgeText(it) },
+        onClick = onYearSelected,
+        background = MidGray,
+        height = 58.dp,
+        cellWidth = timelineCellWidth,
+        labelWidth = timelineLabelWidth
+    )
+    ClickableTimelineRow(
+        label = "流年",
+        items = visibleYears,
+        selected = { it.year == selectedYear },
+        text = { it.gz },
+        onClick = onYearSelected,
+        background = LightGray,
+        cellWidth = timelineCellWidth,
+        labelWidth = timelineLabelWidth
+    )
+    TableRow(
+        cells = listOf("") + terms,
+        background = MidGray,
+        cellWidth = monthCellWidth,
+        labelWidth = timelineLabelWidth
+    )
+    if (loadingMonths) {
+        TableRow(cells = listOf("流月", "加载中"), background = LightGray, cellWidth = monthCellWidth, labelWidth = timelineLabelWidth)
+    } else {
+        ClickableTimelineRow(
+            label = "流月",
+            items = monthItems.take(12),
+            selected = { it.month == selectedMonth },
+            text = { it.gz },
+            onClick = onMonthSelected,
+            background = LightGray,
+            cellWidth = monthCellWidth,
+            labelWidth = timelineLabelWidth
+        )
+    }
+    if (loadingDays) {
+        TableRow(cells = listOf("流日", "加载中"), background = MidGray, cellWidth = dayCellWidth, labelWidth = timelineLabelWidth)
+    } else {
+        ClickableTimelineRow(
+            label = "流日",
+            items = dayItems.take(31),
+            selected = { it.idx == selectedDay },
+            text = { it.gz },
+            onClick = onDaySelected,
+            background = MidGray,
+            height = 52.dp,
+            cellWidth = dayCellWidth,
+            labelWidth = timelineLabelWidth,
+            scrollItems = true
+        )
+    }
+    TableRow(
+        cells = listOf("天干留意:", tianganNote),
+        background = LightGray,
+        height = 42.dp,
+        cellWidth = timelineCellWidth * 10,
+        labelWidth = timelineLabelWidth
+    )
+    TableRow(
+        cells = listOf("地支留意:", dizhiNote),
+        background = Color.White,
+        height = 58.dp,
+        cellWidth = timelineCellWidth * 10,
+        labelWidth = timelineLabelWidth
+    )
+    TableRow(
+        cells = listOf("大运神煞:", dayunShensha),
+        background = LightGray,
+        height = 58.dp,
+        cellWidth = timelineCellWidth * 10,
+        labelWidth = timelineLabelWidth
+    )
+    TableRow(
+        cells = listOf("文昌阵:", wenChangText),
+        background = Color.White,
+        height = 96.dp,
+        cellWidth = timelineCellWidth * 10,
+        labelWidth = timelineLabelWidth
+    )
+}
+
+private val tianganSet = setOf("甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸")
+private val dizhiSet = setOf("子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥")
+
+private val liuyiRules = listOf(
+    "甲己" to "合土",
+    "乙庚" to "合金",
+    "丙辛" to "合水",
+    "丁壬" to "合木",
+    "戊癸" to "合火",
+    "甲庚" to "冲",
+    "乙辛" to "冲",
+    "丙壬" to "冲",
+    "丁癸" to "冲",
+    "巳申" to "合化水",
+    "辰酉" to "合化金",
+    "卯戌" to "合化火",
+    "寅亥" to "合化木",
+    "子丑" to "合化土",
+    "午未" to "合化火或土",
+    "申子辰" to "合化水",
+    "寅午戌" to "合化火",
+    "亥卯未" to "合化木",
+    "巳酉丑" to "合化金",
+    "亥子丑" to "汇聚北方水",
+    "寅卯辰" to "汇聚东方木",
+    "巳午未" to "汇聚南方火",
+    "申酉戌" to "汇聚西方金",
+    "子卯" to "为无礼之刑",
+    "丑未戌" to "为恃势之刑",
+    "寅巳申" to "为无恩之刑",
+    "辰辰" to "为自刑",
+    "午午" to "为自刑",
+    "酉酉" to "为自刑",
+    "亥亥" to "为自刑",
+    "子午" to "相冲",
+    "卯酉" to "相冲",
+    "寅申" to "相冲",
+    "巳亥" to "相冲",
+    "辰戌" to "相冲",
+    "丑未" to "相冲",
+    "子未" to "相害",
+    "丑午" to "相害",
+    "寅巳" to "相害",
+    "卯辰" to "相害",
+    "申亥" to "相害",
+    "酉戌" to "相害",
+    "寅午" to "暗合土",
+    "子巳" to "暗合火",
+    "巳酉" to "暗合水",
+    "卯申" to "暗合金",
+    "亥午" to "暗合木",
+    "子酉" to "相破",
+    "寅亥" to "相破",
+    "卯午" to "相破",
+    "辰丑" to "相破",
+    "巳申" to "相破",
+    "未戌" to "相破"
+)
+
+private fun calcLiuyi(values: List<String>, tianganOnly: Boolean): String {
+    val usableChars = if (tianganOnly) tianganSet else dizhiSet
+    val source = values
+        .flatMap { text -> text.map { it.toString() } }
+        .filter { it in usableChars }
+        .toMutableList()
+    if (source.isEmpty()) return ""
+
+    val notes = liuyiRules.mapNotNull { (pattern, suffix) ->
+        if (pattern.any { it.toString() !in usableChars }) return@mapNotNull null
+        val remaining = source.toMutableList()
+        val matched = buildString {
+            pattern.forEach { char ->
+                val index = remaining.indexOf(char.toString())
+                if (index >= 0) append(remaining.removeAt(index))
+            }
+        }
+        if (matched == pattern) "$pattern$suffix" else null
+    }
+    return notes.distinct().joinToString("; ").let { if (it.isBlank()) "" else "$it;" }
+}
+
+private fun buildWenChangText(dayGan: String): String {
+    val star = when (dayGan.trim().take(1)) {
+        "甲" -> "巳"
+        "乙" -> "午"
+        "丙", "戊" -> "申"
+        "丁", "己" -> "酉"
+        "庚" -> "亥"
+        "辛" -> "子"
+        "壬" -> "寅"
+        "癸" -> "卯"
+        else -> ""
+    }
+    if (star.isBlank()) return "日干缺失，无法计算文昌阵"
+    val position = when (star) {
+        "巳" -> "东南"
+        "午" -> "正南"
+        "申" -> "西南"
+        "酉" -> "正西"
+        "亥" -> "西北"
+        "子" -> "正北"
+        "寅" -> "东北"
+        "卯" -> "正东"
+        else -> "未知方位"
+    }
+    val color = when (star) {
+        "巳", "午" -> "红色/紫色"
+        "申", "酉" -> "金色/白色"
+        "亥", "子" -> "黑色/蓝色"
+        "寅", "卯" -> "绿色/青色"
+        else -> "未知颜色"
+    }
+    return listOf(
+        "本命文昌星：$star",
+        "文昌位：$position",
+        "文昌塔：1个，颜色：$color",
+        "北斗七星灯：1盏，颜色：$color，摆放：文昌塔旁边"
+    ).joinToString("\n")
+}
+
+@Composable
+private fun <T> ClickableTimelineRow(
+    label: String,
+    items: List<T>,
+    selected: (T) -> Boolean,
+    text: (T) -> String,
+    onClick: (T) -> Unit,
+    background: Color,
+    height: Dp = 38.dp,
+    labelWidth: Dp = 60.dp,
+    cellWidth: Dp = 58.dp,
+    scrollItems: Boolean = false
+) {
+    Row(modifier = Modifier.height(height)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxSize()
+                .background(background)
+                .border(0.5.dp, Color.White),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(label, color = DarkText, fontSize = 13.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        }
+        Row(
+            modifier = if (scrollItems) {
+                Modifier
+                    .weight(1f)
+                    .fillMaxSize()
+                    .horizontalScroll(rememberScrollState())
+            } else {
+                Modifier.fillMaxSize()
+            }
+        ) {
+            items.forEach { item ->
+                TimelineCell(
+                    item = item,
+                    selected = selected,
+                    text = text,
+                    onClick = onClick,
+                    background = background,
+                    cellWidth = cellWidth
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> TimelineCell(
+    item: T,
+    selected: (T) -> Boolean,
+    text: (T) -> String,
+    onClick: (T) -> Unit,
+    background: Color,
+    cellWidth: Dp
+) {
+    val cellText = text(item)
+    val isSelected = selected(item)
+    Box(
+        modifier = Modifier
+            .width(cellWidth)
+            .fillMaxSize()
+            .background(if (isSelected) Color(0xFF9A9A9A) else background)
+            .border(0.5.dp, Color.White)
+            .clickable { onClick(item) }
+            .padding(horizontal = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = cellText,
+            color = stemColor(cellText),
+            fontSize = if (cellWidth < 32.dp) 10.sp else 11.sp,
+            lineHeight = if (cellWidth < 32.dp) 12.sp else 14.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+private fun List<ChartLuckItem>.findLuckForYear(year: Int?): ChartLuckItem? {
+    val y = year ?: return null
+    return lastOrNull { it.startYear <= y } ?: firstOrNull()
+}
+
+private fun BaziTreeItem?.gan(): String = this?.gz?.take(1).orEmpty()
+private fun BaziTreeItem?.zhi(): String = this?.gz?.drop(1)?.take(1).orEmpty()
+private fun BaziTreeItem?.godText(): String = this?.ss?.replace("/", "\n").orEmpty()
+private fun ChartLuckItem?.gan(): String = this?.gz?.take(1).orEmpty()
+private fun ChartLuckItem?.zhi(): String = this?.gz?.drop(1)?.take(1).orEmpty()
+private fun com.lunar.data.ChartPillar.gz(): String = gan + zhi
+
+private fun calcXunKong(gz: String?): String {
+    val value = gz.orEmpty().trim().take(2)
+    if (value.length < 2) return ""
+    val groups = listOf(
+        listOf("甲子", "乙丑", "丙寅", "丁卯", "戊辰", "己巳", "庚午", "辛未", "壬申", "癸酉") to "戌亥",
+        listOf("甲戌", "乙亥", "丙子", "丁丑", "戊寅", "己卯", "庚辰", "辛巳", "壬午", "癸未") to "申酉",
+        listOf("甲申", "乙酉", "丙戌", "丁亥", "戊子", "己丑", "庚寅", "辛卯", "壬辰", "癸巳") to "午未",
+        listOf("甲午", "乙未", "丙申", "丁酉", "戊戌", "己亥", "庚子", "辛丑", "壬寅", "癸卯") to "辰巳",
+        listOf("甲辰", "乙巳", "丙午", "丁未", "戊申", "己酉", "庚戌", "辛亥", "壬子", "癸丑") to "寅卯",
+        listOf("甲寅", "乙卯", "丙辰", "丁巳", "戊午", "己未", "庚申", "辛酉", "壬戌", "癸亥") to "子丑"
+    )
+    return groups.firstOrNull { (items, _) -> value in items }?.second.orEmpty()
+}
+
+private fun stemColor(text: String): Color {
+    return when (text.take(1)) {
+        "甲", "乙", "寅", "卯" -> GreenText
+        "丙", "丁", "巳", "午" -> RedTitle
+        "戊", "己", "辰", "戌", "丑", "未" -> BrownText
+        "庚", "辛", "申", "酉" -> OrangeText
+        "壬", "癸", "亥", "子" -> LinkBlue
+        else -> DarkText
     }
 }
 
@@ -904,6 +1653,6 @@ private fun buildCycleYears(items: List<DayunItem>): List<String> {
 @Composable
 fun ChartScreenPreview() {
     LunarAppTheme {
-        ChartFormScreen(onResult = {})
+        ChartFormScreen(onResult = { _ -> })
     }
 }

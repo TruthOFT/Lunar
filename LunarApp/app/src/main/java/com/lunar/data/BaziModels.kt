@@ -3,6 +3,116 @@ package com.lunar.data
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class ChartResult(
+    val name: String,
+    val gender: String,
+    val birthTime: String,
+    val dateType: String,
+    val rawText: String,
+    val treeItems: List<BaziTreeItem> = emptyList(),
+    val pillars: ChartPillars = ChartPillars(),
+    val luckItems: List<ChartLuckItem> = emptyList(),
+    val conflictNotes: ChartConflictNotes = ChartConflictNotes()
+)
+
+@Serializable
+data class LanxingApiResponse<T>(
+    val code: Int,
+    val msg: String,
+    val data: T? = null,
+    val timestamp: Long? = null
+)
+
+@Serializable
+data class LanxingBaziRequest(
+    val action: String = "八字_树形",
+    val gender: String,
+    val date_type: String,
+    val birth_date: String,
+    val use_true_solar: Boolean = false
+)
+
+@Serializable
+data class LanxingBaziTextRequest(
+    val action: String = "八字",
+    val gender: String,
+    val date_type: String,
+    val birth_date: String,
+    val use_true_solar: Boolean = false
+)
+
+@Serializable
+data class LanxingBaziYearRequest(
+    val action: String = "八字_树形",
+    val gender: String,
+    val date_type: String,
+    val birth_date: String,
+    val use_true_solar: Boolean = false,
+    val query_year: Int
+)
+
+@Serializable
+data class LanxingBaziMonthRequest(
+    val action: String = "八字_树形",
+    val gender: String,
+    val date_type: String,
+    val birth_date: String,
+    val use_true_solar: Boolean = false,
+    val query_year: Int,
+    val query_month: Int
+)
+
+@Serializable
+data class BaziTreeItem(
+    val year: Int? = null,
+    val age: Int? = null,
+    val idx: Int? = null,
+    val month: Int? = null,
+    val name: String? = null,
+    val gz: String = "",
+    val nayin: String? = null,
+    val ds: String? = null,
+    val ss: String = "",
+    val cangGanSS: List<String> = emptyList(),
+    val sx: List<String> = emptyList()
+)
+
+@Serializable
+data class ChartPillars(
+    val year: ChartPillar = ChartPillar(),
+    val month: ChartPillar = ChartPillar(),
+    val day: ChartPillar = ChartPillar(),
+    val hour: ChartPillar = ChartPillar()
+)
+
+@Serializable
+data class ChartPillar(
+    val gan: String = "",
+    val zhi: String = "",
+    val ganGod: String = "",
+    val zhiGod: String = "",
+    val hidden: List<String> = emptyList(),
+    val nayin: String = "",
+    val state: String = ""
+)
+
+@Serializable
+data class ChartConflictNotes(
+    val tiangan: String = "",
+    val dizhi: String = ""
+)
+
+@Serializable
+data class ChartLuckItem(
+    val gz: String,
+    val startYear: Int,
+    val age: Int,
+    val state: String = "",
+    val god: String = "",
+    val stars: String = ""
+)
+
+@Serializable
 data class SolarRequest(
     val year: Int,
     val month: Int,

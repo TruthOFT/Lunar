@@ -12,15 +12,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.lunar.data.AuthSession
-import com.lunar.data.BaziResponse
+import com.lunar.data.ChartResult
 import com.lunar.data.ChartRecordItem
 import com.lunar.data.SessionStore
 import com.lunar.navigation.AppDestinations
 import com.lunar.ui.components.BottomNavBar
 import com.lunar.ui.screens.AiAnalysisScreen
 import com.lunar.ui.screens.ChartRoute
-import com.lunar.ui.screens.CourseScreen
 import com.lunar.ui.screens.LoginScreen
+import com.lunar.ui.screens.MineScreen
 import com.lunar.ui.screens.RecordScreen
 
 @Composable
@@ -31,7 +31,7 @@ fun LunarAppApp() {
     var pendingDestination by rememberSaveable { mutableStateOf<AppDestinations?>(null) }
     var session by remember { mutableStateOf<AuthSession?>(sessionStore.load()) }
     var showLogin by rememberSaveable { mutableStateOf(false) }
-    var chartResult by remember { mutableStateOf<BaziResponse?>(null) }
+    var chartResult by remember { mutableStateOf<ChartResult?>(null) }
     var aiRecord by remember { mutableStateOf<ChartRecordItem?>(null) }
 
     Scaffold(
@@ -42,6 +42,9 @@ fun LunarAppApp() {
                 onDestinationSelected = { destination ->
                     aiRecord = null
                     if (destination == AppDestinations.CHART) {
+                        showLogin = false
+                        currentDestination = destination
+                    } else if (destination == AppDestinations.MINE) {
                         showLogin = false
                         currentDestination = destination
                     } else if (session == null) {
@@ -107,7 +110,28 @@ fun LunarAppApp() {
                 modifier = Modifier.padding(innerPadding)
             )
 
-            AppDestinations.COURSE -> CourseScreen(
+            AppDestinations.MINE -> MineScreen(
+                authSession = session,
+                onRequireLogin = {
+                    pendingDestination = AppDestinations.MINE
+                    showLogin = true
+                    currentDestination = AppDestinations.MINE
+                },
+                onLoginInvalid = {
+                    sessionStore.clear()
+                    session = null
+                    pendingDestination = AppDestinations.MINE
+                    showLogin = true
+                    currentDestination = AppDestinations.MINE
+                },
+                onLogout = {
+                    sessionStore.clear()
+                    session = null
+                    showLogin = false
+                    currentDestination = AppDestinations.MINE
+                    chartResult = null
+                    aiRecord = null
+                },
                 modifier = Modifier.padding(innerPadding)
             )
         }

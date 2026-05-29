@@ -1,10 +1,10 @@
 package com.lunar.data
 
 import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Dns
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
@@ -13,10 +13,27 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
-import retrofit2.http.Url
+import java.net.ConnectException
+import java.net.InetAddress
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
-private const val BACKEND_BASE_URL = "http://192.168.0.222:8080/"
+private const val BACKEND_BASE_URL = "http://101.34.238.130:7000/"
+private const val BAZI_BASE_URL = "http://www.lanxingai.space/"
+
+private object LanxingDns : Dns {
+    private const val HOST = "www.lanxingai.space"
+    private const val WORKING_IP = "154.44.26.249"
+
+    override fun lookup(hostname: String): List<InetAddress> {
+        val systemAddresses = runCatching { Dns.SYSTEM.lookup(hostname) }.getOrDefault(emptyList())
+        if (hostname != HOST) return systemAddresses
+        val workingAddress = InetAddress.getByName(WORKING_IP)
+        return (listOf(workingAddress) + systemAddresses)
+            .distinctBy { it.hostAddress }
+    }
+}
 
 object AuthTokenHolder {
     @Volatile
@@ -53,18 +70,27 @@ private val backendRetrofit: Retrofit = Retrofit.Builder()
     .build()
 
 private val baziRetrofit: Retrofit = Retrofit.Builder()
-    .baseUrl("http://10.0.2.2:8081/")
-    .client(OkHttpClient.Builder().build())
+    .baseUrl(BAZI_BASE_URL)
+    .client(
+        OkHttpClient.Builder()
+            .dns(LanxingDns)
+            .retryOnConnectionFailure(true)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .callTimeout(180, TimeUnit.SECONDS)
+            .build()
+    )
     .addConverterFactory(jsonConverterFactory)
     .build()
 
 private val backendApi: BackendApi = backendRetrofit.create(BackendApi::class.java)
 private val baziApi: BaziRetrofitApi = baziRetrofit.create(BaziRetrofitApi::class.java)
 
-private val baziCalculateUrls = listOf(
-    "http://10.0.2.2:8081/api/bazi/calculate",
-    "http://101.34.238.130:8080/api/bazi/calculate"
-)
+class ApiBusinessException(
+    val code: Int,
+    override val message: String
+) : RuntimeException(message)
 
 interface BackendApi {
 
@@ -89,16 +115,18 @@ interface BackendApi {
 
 interface BaziRetrofitApi {
 
-    @POST
-    suspend fun calculate(@Url url: String, @Body request: BaziCalculateRequest): BaziResponse
-}
+    @POST("api.php")
+    suspend fun calculate(@Body request: LanxingBaziRequest): LanxingApiResponse<List<BaziTreeItem>>
 
-@Serializable
-data class BaziCalculateRequest(
-    val name: String,
-    val sex: Int,
-    val solar: SolarRequest
-)
+    @POST("api.php")
+    suspend fun calculateText(@Body request: LanxingBaziTextRequest): LanxingApiResponse<String>
+
+    @POST("api.php")
+    suspend fun calculateYear(@Body request: LanxingBaziYearRequest): LanxingApiResponse<List<BaziTreeItem>>
+
+    @POST("api.php")
+    suspend fun calculateMonth(@Body request: LanxingBaziMonthRequest): LanxingApiResponse<List<BaziTreeItem>>
+}
 
 suspend fun login(account: String, password: String): AuthSession {
     val response = backendApi.login(AuthRequest(account = account, password = password))
@@ -130,19 +158,202 @@ suspend fun analyzeChartRecord(token: String, request: AiAnalyzeRequest): String
     return backendApi.analyze(request).requireData()
 }
 
-suspend fun fetchBaziCalculate(name: String, sex: Int, solar: SolarRequest): BaziResponse {
-    val request = BaziCalculateRequest(name = name, sex = sex, solar = solar)
-    var lastError: Throwable? = null
+suspend fun fetchBaziCalculate(
+    name: String,
+    sex: Int,
+    dateType: String,
+    solar: SolarRequest
+): ChartResult {
+    val gender = if (sex == 0) "女" else "男"
+    val birthTime = "%04d-%02d-%02d %02d:%02d".format(
+        solar.year,
+        solar.month,
+        solar.day,
+        solar.hour,
+        solar.minute
+    )
+    val treeResponse = baziApi.calculate(
+        LanxingBaziRequest(
+            gender = gender,
+            date_type = dateType,
+            birth_date = birthTime,
+            use_true_solar = false
+        )
+    )
+    if (treeResponse.code != 200) {
+        throw ApiBusinessException(treeResponse.code, treeResponse.msg)
+    }
+    val textResponse = baziApi.calculateText(
+        LanxingBaziTextRequest(
+            gender = gender,
+            date_type = dateType,
+            birth_date = birthTime,
+            use_true_solar = false
+        )
+    )
+    if (textResponse.code != 200) {
+        throw ApiBusinessException(textResponse.code, textResponse.msg)
+    }
+    val items = treeResponse.data ?: throw IllegalStateException("接口无响应数据")
+    val rawText = textResponse.data.orEmpty()
+    return ChartResult(
+        name = name.ifBlank { "未命名" },
+        gender = gender,
+        birthTime = birthTime,
+        dateType = dateType,
+        rawText = rawText,
+        treeItems = items,
+        pillars = parsePillars(rawText),
+        luckItems = parseLuckItems(rawText),
+        conflictNotes = parseConflictNotes(rawText)
+    )
+}
 
-    for (url in baziCalculateUrls) {
-        try {
-            return baziApi.calculate(url, request)
-        } catch (error: Throwable) {
-            lastError = error
+private fun parsePillars(rawText: String): ChartPillars {
+    val gan = parsePipeRow(rawText, "天干")
+    val zhi = parsePipeRow(rawText, "地支")
+    val ganGod = parsePipeRow(rawText, "天干十神")
+    val hiddenRows = rawText.lines()
+        .filter { it.contains("|") && (it.contains("偏") || it.contains("正") || it.contains("七杀") || it.contains("比肩") || it.contains("劫财") || it.contains("食神") || it.contains("伤官")) }
+        .filter { it.trimStart().startsWith("藏干十神") || it.trimStart().startsWith("|").not() && it.startsWith("　　　　 |") }
+    val hidden = List(4) { mutableListOf<String>() }
+    hiddenRows.forEach { line ->
+        parsePipeRowCells(line).forEachIndexed { index, cell ->
+            if (index in 0..3 && cell.isNotBlank()) hidden[index].add(cell)
         }
     }
+    val nayin = parsePipeRow(rawText, "纳音")
+    val state = parsePipeRow(rawText, "自坐").ifEmpty { parsePipeRow(rawText, "星运") }
+    return ChartPillars(
+        year = ChartPillar(gan.getOrElse(0) { "" }, zhi.getOrElse(0) { "" }, ganGod.getOrElse(0) { "" }, hidden.getOrNull(0)?.firstOrNull().orEmpty(), hidden.getOrNull(0).orEmpty(), nayin.getOrElse(0) { "" }, state.getOrElse(0) { "" }),
+        month = ChartPillar(gan.getOrElse(1) { "" }, zhi.getOrElse(1) { "" }, ganGod.getOrElse(1) { "" }, hidden.getOrNull(1)?.firstOrNull().orEmpty(), hidden.getOrNull(1).orEmpty(), nayin.getOrElse(1) { "" }, state.getOrElse(1) { "" }),
+        day = ChartPillar(gan.getOrElse(2) { "" }, zhi.getOrElse(2) { "" }, ganGod.getOrElse(2) { "" }, hidden.getOrNull(2)?.firstOrNull().orEmpty(), hidden.getOrNull(2).orEmpty(), nayin.getOrElse(2) { "" }, state.getOrElse(2) { "" }),
+        hour = ChartPillar(gan.getOrElse(3) { "" }, zhi.getOrElse(3) { "" }, ganGod.getOrElse(3) { "" }, hidden.getOrNull(3)?.firstOrNull().orEmpty(), hidden.getOrNull(3).orEmpty(), nayin.getOrElse(3) { "" }, state.getOrElse(3) { "" })
+    )
+}
 
-    throw IllegalStateException("接口请求失败：${lastError?.message ?: "未知错误"}")
+private fun parsePipeRow(rawText: String, label: String): List<String> {
+    val line = rawText.lines().firstOrNull { it.trimStart().startsWith(label) && it.contains("|") } ?: return emptyList()
+    return parsePipeRowCells(line)
+}
+
+private fun parsePipeRowCells(line: String): List<String> {
+    return line.substringAfter("|", "")
+        .split("|")
+        .map { it.replace("　", "").trim() }
+        .filter { it.isNotBlank() }
+        .take(4)
+}
+
+private fun parseLuckItems(rawText: String): List<ChartLuckItem> {
+    val start = rawText.lines().indexOfFirst { it.trim() == "大运信息" }
+    if (start < 0) return emptyList()
+    return rawText.lines()
+        .drop(start + 3)
+        .takeWhile { it.isNotBlank() && !it.trim().endsWith("信息") }
+        .mapNotNull { line ->
+            val cells = line.split("|").map { it.trim() }
+            if (cells.size < 4) return@mapNotNull null
+            val startYear = cells.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+            val age = cells.getOrNull(2)?.filter { it.isDigit() }?.toIntOrNull() ?: 0
+            ChartLuckItem(
+                gz = cells.getOrElse(0) { "" },
+                startYear = startYear,
+                age = age,
+                state = cells.getOrElse(3) { "" },
+                god = cells.getOrElse(4) { "" },
+                stars = cells.getOrElse(5) { "" }
+            )
+        }
+}
+
+private fun parseConflictNotes(rawText: String): ChartConflictNotes {
+    val lines = rawText.lines()
+    return ChartConflictNotes(
+        tiangan = parseConflictBlock(lines, "原局天干"),
+        dizhi = parseConflictBlock(lines, "原局地支")
+    )
+}
+
+private fun parseConflictBlock(lines: List<String>, title: String): String {
+    val start = lines.indexOfFirst { it.trim() == title }
+    if (start < 0) return ""
+    val nextTitles = setOf("原局天干", "原局地支", "原局整柱", "日主分析", "大运信息", "流年信息")
+    return lines
+        .drop(start + 1)
+        .takeWhile { line ->
+            val trimmed = line.trim()
+            trimmed !in nextTitles && !trimmed.endsWith("信息")
+        }
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .joinToString("  ")
+}
+
+suspend fun fetchBaziTreeItems(
+    gender: String,
+    dateType: String,
+    birthTime: String,
+    queryYear: Int,
+    queryMonth: Int? = null
+): List<BaziTreeItem> {
+    val response = if (queryMonth == null) {
+        baziApi.calculateYear(
+            LanxingBaziYearRequest(
+                gender = gender,
+                date_type = dateType,
+                birth_date = birthTime,
+                use_true_solar = false,
+                query_year = queryYear
+            )
+        )
+    } else {
+        baziApi.calculateMonth(
+            LanxingBaziMonthRequest(
+                gender = gender,
+                date_type = dateType,
+                birth_date = birthTime,
+                use_true_solar = false,
+                query_year = queryYear,
+                query_month = queryMonth
+            )
+        )
+    }
+    if (response.code != 200) {
+        throw ApiBusinessException(response.code, response.msg)
+    }
+    return response.data ?: throw IllegalStateException("接口无响应数据")
+}
+
+private fun formatTreeItems(items: List<BaziTreeItem>): String {
+    if (items.isEmpty()) {
+        return "暂无树形数据"
+    }
+    return buildString {
+        appendLine("年份 | 年龄 | 干支 | 纳音 | 旺衰 | 十神 | 神煞")
+        appendLine("---- | ---- | ---- | ---- | ---- | ---- | ----")
+        items.forEach { item ->
+            append(item.year ?: item.month ?: "")
+            append(" | ")
+            append(item.age?.let { "${it}岁" } ?: item.name.orEmpty())
+            append(" | ")
+            append(item.gz)
+            append(" | ")
+            append(item.nayin.orEmpty())
+            append(" | ")
+            append(item.ds.orEmpty())
+            append(" | ")
+            append(item.ss)
+            append(" | ")
+            append(item.sx.joinToString("、"))
+            val hidden = item.cangGanSS.joinToString("、").takeIf { it.isNotBlank() }
+            if (hidden != null) {
+                append(" | 藏干: ")
+                append(hidden)
+            }
+            appendLine()
+        }
+    }
 }
 
 private fun AuthResponse.toSession(): AuthSession {
@@ -156,16 +367,24 @@ private fun AuthResponse.toSession(): AuthSession {
 
 private fun <T> ApiResponse<T>.requireData(): T {
     if (code != 0) {
-        throw IllegalStateException(message)
+        throw ApiBusinessException(code, message)
     }
     return data ?: throw IllegalStateException("接口无响应数据")
 }
 
 fun Throwable.userMessage(): String {
     return when (this) {
+        is ApiBusinessException -> message
         is HttpException -> apiErrorMessage() ?: "接口异常：${code()}"
+        is SocketTimeoutException -> "排盘接口连接超时，请稍后重试或切换网络"
+        is ConnectException -> "排盘接口暂时连不上，请稍后重试或切换网络"
+        is UnknownHostException -> "无法解析排盘接口域名，请检查网络"
         else -> message ?: "网络请求失败"
     }
+}
+
+fun Throwable.isLoginInvalid(): Boolean {
+    return this is ApiBusinessException && code in setOf(4007, 4008, 4009)
 }
 
 private fun HttpException.apiErrorMessage(): String? {

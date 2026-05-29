@@ -35,7 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lunar.data.AuthSession
 import com.lunar.data.AiAnalyzeRequest
-import com.lunar.data.BaziResponse
+import com.lunar.data.ChartResult
 import com.lunar.data.ChartRecordItem
 import com.lunar.data.analyzeChartRecord
 import com.lunar.data.appJson
@@ -50,7 +50,7 @@ import kotlinx.serialization.decodeFromString
 fun RecordScreen(
     authSession: AuthSession?,
     onRequireLogin: () -> Unit,
-    onOpenRecord: (BaziResponse) -> Unit,
+    onOpenRecord: (ChartResult) -> Unit,
     onAiAnalysis: (ChartRecordItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -94,7 +94,7 @@ fun RecordScreen(
                         onAiAnalysis = { onAiAnalysis(item) },
                         onClick = {
                             runCatching {
-                                appJson.decodeFromString<BaziResponse>(item.resultJson)
+                                appJson.decodeFromString<ChartResult>(item.resultJson)
                             }.onSuccess(onOpenRecord)
                                 .onFailure { errorMessage = "记录解析失败，无法查看详情" }
                         }
@@ -180,11 +180,6 @@ fun AiAnalysisScreen(
 }
 
 @Composable
-fun CourseScreen(modifier: Modifier = Modifier) {
-    PlaceholderScreen(title = "课程", modifier = modifier)
-}
-
-@Composable
 private fun RecordItem(
     item: ChartRecordItem,
     onAiAnalysis: () -> Unit,
@@ -227,15 +222,5 @@ private fun RecordItem(
 private fun EmptyBlock(text: String, color: Color) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, color = color, fontSize = 16.sp)
-    }
-}
-
-@Composable
-private fun PlaceholderScreen(title: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.fillMaxSize().background(Color.White),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(title, color = DarkText, fontSize = 18.sp)
     }
 }
