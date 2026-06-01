@@ -920,13 +920,18 @@ private fun LinkedDetailGrid(
         result.pillars.hour
     )
     val headers = listOf("日期", "流日", "流月", "流年", "大运", "年柱", "月柱", "日柱", "时柱")
+    val birthParts = result.birthTime.split(Regex("[\\- :]"))
+    val birthYear = birthParts.getOrNull(0).orEmpty()
+    val birthMonth = (birthParts.getOrNull(1)?.toIntOrNull()?.toString() ?: "").let { if (it.isNotBlank()) "${it}月" else "" }
+    val birthDay = (birthParts.getOrNull(2)?.toIntOrNull()?.toString() ?: "").let { if (it.isNotBlank()) "${it}日" else "" }
+    val birthHour = (birthParts.getOrNull(3)?.toIntOrNull()?.toString() ?: "").let { if (it.isNotBlank()) "${it}时" else "" }
     val dateRow = listOf(
         "岁年",
         dayItem.treeLabel(),
         monthItem.treeLabel(),
         yearItem.treeLabel(),
         luckItem?.let { "${it.age}岁\n${it.startYear}" }.orEmpty(),
-    ) + List(4) { "*" }
+    ) + listOf(birthYear, birthMonth, birthDay, birthHour)
     val ganRow = listOf(
         "天干",
         dayItem.gan(),
