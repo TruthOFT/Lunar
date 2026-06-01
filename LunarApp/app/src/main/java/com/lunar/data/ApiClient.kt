@@ -4,7 +4,6 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Dns
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
@@ -14,26 +13,12 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import java.net.ConnectException
-import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 private const val BACKEND_BASE_URL = "http://101.34.238.130:7000/"
 private const val BAZI_BASE_URL = "http://www.lanxingai.space/"
-
-private object LanxingDns : Dns {
-    private const val HOST = "www.lanxingai.space"
-    private const val WORKING_IP = "154.44.26.249"
-
-    override fun lookup(hostname: String): List<InetAddress> {
-        val systemAddresses = runCatching { Dns.SYSTEM.lookup(hostname) }.getOrDefault(emptyList())
-        if (hostname != HOST) return systemAddresses
-        val workingAddress = InetAddress.getByName(WORKING_IP)
-        return (listOf(workingAddress) + systemAddresses)
-            .distinctBy { it.hostAddress }
-    }
-}
 
 object AuthTokenHolder {
     @Volatile
@@ -73,7 +58,6 @@ private val baziRetrofit: Retrofit = Retrofit.Builder()
     .baseUrl(BAZI_BASE_URL)
     .client(
         OkHttpClient.Builder()
-            .dns(LanxingDns)
             .retryOnConnectionFailure(true)
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -111,6 +95,9 @@ interface BackendApi {
 
     @POST("api/ai/analyze")
     suspend fun analyze(@Body request: AiAnalyzeRequest): ApiResponse<String>
+
+    @POST("api/licences/activate")
+    suspend fun activateLicence(@Body request: LicenceActivateRequest): ApiResponse<LicenceActivateResponse>
 }
 
 interface BaziRetrofitApi {
@@ -158,6 +145,11 @@ suspend fun analyzeChartRecord(token: String, request: AiAnalyzeRequest): String
     return backendApi.analyze(request).requireData()
 }
 
+suspend fun activateLicence(token: String, licenceCode: String): LicenceActivateResponse {
+    AuthTokenHolder.token = token
+    return backendApi.activateLicence(LicenceActivateRequest(licenceCode = licenceCode)).requireData()
+}
+
 suspend fun fetchBaziCalculate(
     name: String,
     sex: Int,
@@ -196,6 +188,7 @@ suspend fun fetchBaziCalculate(
     }
     val items = treeResponse.data ?: throw IllegalStateException("接口无响应数据")
     val rawText = textResponse.data.orEmpty()
+    val luckItems = parseLuckItems(rawText)
     return ChartResult(
         name = name.ifBlank { "未命名" },
         gender = gender,
@@ -204,8 +197,9 @@ suspend fun fetchBaziCalculate(
         rawText = rawText,
         treeItems = items,
         pillars = parsePillars(rawText),
-        luckItems = parseLuckItems(rawText),
-        conflictNotes = parseConflictNotes(rawText)
+        luckItems = luckItems,
+        conflictNotes = parseConflictNotes(rawText),
+        summary = parseChartSummary(rawText, gender, birthTime, luckItems)
     )
 }
 
@@ -288,6 +282,58 @@ private fun parseConflictBlock(lines: List<String>, title: String): String {
         .map { it.trim() }
         .filter { it.isNotBlank() }
         .joinToString("  ")
+}
+
+private fun parseChartSummary(
+    rawText: String,
+    fallbackGender: String,
+    birthTime: String,
+    luckItems: List<ChartLuckItem>
+): ChartSummary {
+    val firstLuck = luckItems.firstOrNull()
+    val startYear = firstLuck?.startYear
+    return ChartSummary(
+        gender = parseBracketValue(rawText, "性别").ifBlank { fallbackGender },
+        zodiac = parseBracketValue(rawText, "生肖"),
+        gregorianDatetime = parseBracketValue(rawText, "公历日期").ifBlank { birthTime },
+        lunarDatetime = parseBracketValue(rawText, "农历日期"),
+        solarTerms = parseSolarTerms(rawText),
+        taiyuan = parseBracketValue(rawText, "胎元"),
+        minggong = parseBracketValue(rawText, "命宫"),
+        wuxing = "暂无",
+        startYun = firstLuck?.let { luck ->
+            if (luck.age <= 0) "出生当年起运" else "出生后 ${luck.age} 岁起运"
+        }.orEmpty(),
+        handoverYun = startYear?.let { "命主于公历${it}年交运" }.orEmpty(),
+        changeYun = startYear?.let { "以后每逢尾数带${it % 10}的年份换运" }.orEmpty()
+    )
+}
+
+private fun parseBracketValue(rawText: String, label: String): String {
+    return Regex("【${Regex.escape(label)}】：([^\\r\\n]+)")
+        .find(rawText)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.cleanSummaryText()
+        .orEmpty()
+}
+
+private fun parseSolarTerms(rawText: String): String {
+    val lines = rawText.lines()
+    val start = lines.indexOfFirst { it.trim().startsWith("【节气信息】") }
+    if (start < 0) return ""
+    return lines
+        .drop(start + 1)
+        .map { it.cleanSummaryText() }
+        .filter { it.isNotBlank() }
+        .takeWhile { it != "八字排盘" }
+        .take(2)
+        .joinToString("  ")
+}
+
+private fun String.cleanSummaryText(): String {
+    return replace("\u3000", "")
+        .trim()
 }
 
 suspend fun fetchBaziTreeItems(

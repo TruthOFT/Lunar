@@ -12,7 +12,8 @@ data class ChartResult(
     val treeItems: List<BaziTreeItem> = emptyList(),
     val pillars: ChartPillars = ChartPillars(),
     val luckItems: List<ChartLuckItem> = emptyList(),
-    val conflictNotes: ChartConflictNotes = ChartConflictNotes()
+    val conflictNotes: ChartConflictNotes = ChartConflictNotes(),
+    val summary: ChartSummary = ChartSummary()
 )
 
 @Serializable
@@ -100,6 +101,21 @@ data class ChartPillar(
 data class ChartConflictNotes(
     val tiangan: String = "",
     val dizhi: String = ""
+)
+
+@Serializable
+data class ChartSummary(
+    val gender: String = "",
+    val zodiac: String = "",
+    val gregorianDatetime: String = "",
+    val lunarDatetime: String = "",
+    val solarTerms: String = "",
+    val taiyuan: String = "",
+    val minggong: String = "",
+    val wuxing: String = "",
+    val startYun: String = "",
+    val handoverYun: String = "",
+    val changeYun: String = ""
 )
 
 @Serializable

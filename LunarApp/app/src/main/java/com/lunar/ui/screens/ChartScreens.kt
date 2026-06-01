@@ -5,6 +5,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -36,16 +40,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -55,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lunar.data.AuthSession
@@ -65,9 +75,12 @@ import com.lunar.data.ChartLuckItem
 import com.lunar.data.DayunItem
 import com.lunar.data.RecordSaveRequest
 import com.lunar.data.SolarRequest
+import com.lunar.data.UserInfo
+import com.lunar.data.activateLicence
 import com.lunar.data.appJson
 import com.lunar.data.fetchBaziCalculate
 import com.lunar.data.fetchBaziTreeItems
+import com.lunar.data.fetchCurrentUser
 import com.lunar.data.saveChartRecord
 import com.lunar.data.userMessage
 import com.lunar.ui.theme.BrownText
@@ -84,6 +97,7 @@ import com.lunar.ui.theme.OrangeText
 import com.lunar.ui.theme.RedTitle
 import com.lunar.ui.theme.LunarAppTheme
 import java.util.Calendar
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 
@@ -106,7 +120,9 @@ fun ChartRoute(
     } else {
         BaziResultScreen(
             result = result,
+            authSession = authSession,
             onReset = onReset,
+            onRequireLogin = onRequireLogin,
             modifier = modifier
         )
     }
@@ -258,51 +274,434 @@ private fun buildBirthTime(year: Int, month: Int, day: Int, hour: Int, minute: I
 @Composable
 fun BaziResultScreen(
     result: ChartResult,
+    authSession: AuthSession? = null,
     onReset: () -> Unit,
+    onRequireLogin: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    Column(
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    var currentUser by remember { mutableStateOf<UserInfo?>(null) }
+    var userReloadKey by remember { mutableStateOf(0) }
+    var showActivateDialog by remember { mutableStateOf(false) }
+    var activateCode by rememberSaveable { mutableStateOf("") }
+    var isActivating by rememberSaveable { mutableStateOf(false) }
+    var showNotebookDialog by rememberSaveable(result.birthTime) { mutableStateOf(false) }
+    var noteList by rememberSaveable(result.birthTime) { mutableStateOf<List<String>>(emptyList()) }
+    var draftNote by rememberSaveable(result.birthTime) { mutableStateOf("") }
+    val buttonWidth = 88.dp
+    val buttonHeight = 44.dp
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val buttonWidthPx = with(density) { buttonWidth.toPx() }
+    val buttonHeightPx = with(density) { buttonHeight.toPx() }
+    val maxNoteButtonX = (screenWidthPx - buttonWidthPx).coerceAtLeast(0f)
+    val maxNoteButtonY = (screenHeightPx - buttonHeightPx).coerceAtLeast(0f)
+    var noteButtonX by rememberSaveable(result.birthTime) {
+        mutableStateOf((screenWidthPx - buttonWidthPx - with(density) { 16.dp.toPx() }).coerceAtLeast(0f))
+    }
+    var noteButtonY by rememberSaveable(result.birthTime) {
+        mutableStateOf((screenHeightPx - buttonHeightPx - with(density) { 96.dp.toPx() }).coerceAtLeast(0f))
+    }
+
+    LaunchedEffect(authSession?.token, userReloadKey) {
+        val session = authSession
+        currentUser = null
+        if (session != null) {
+            runCatching { fetchCurrentUser(session.token) }
+                .onSuccess { currentUser = it }
+        }
+    }
+
+    LaunchedEffect(maxNoteButtonX, maxNoteButtonY) {
+        noteButtonX = noteButtonX.coerceIn(0f, maxNoteButtonX)
+        noteButtonY = noteButtonY.coerceIn(0f, maxNoteButtonY)
+    }
+
+    if (showActivateDialog) {
+        ActivateVipDialog(
+            code = activateCode,
+            onCodeChange = { activateCode = it },
+            isActivating = isActivating,
+            onDismiss = {
+                if (!isActivating) {
+                    showActivateDialog = false
+                }
+            },
+            onConfirm = {
+                val session = authSession
+                if (session == null) {
+                    showActivateDialog = false
+                    Toast.makeText(context, "请先登录", Toast.LENGTH_SHORT).show()
+                    onRequireLogin()
+                } else if (activateCode.isBlank()) {
+                    Toast.makeText(context, "请输入激活码", Toast.LENGTH_SHORT).show()
+                } else {
+                    scope.launch {
+                        isActivating = true
+                        runCatching { activateLicence(session.token, activateCode) }
+                            .onSuccess {
+                                Toast.makeText(context, "激活成功", Toast.LENGTH_SHORT).show()
+                                activateCode = ""
+                                showActivateDialog = false
+                                userReloadKey++
+                            }
+                            .onFailure {
+                                Toast.makeText(context, it.userMessage(), Toast.LENGTH_SHORT).show()
+                            }
+                        isActivating = false
+                    }
+                }
+            }
+        )
+    }
+
+    if (showNotebookDialog) {
+        FourPillarNotebookDialog(
+            notes = noteList,
+            note = draftNote,
+            onNoteChange = { draftNote = it },
+            onSave = {
+                val newNote = draftNote.trim()
+                if (newNote.isNotBlank()) {
+                    noteList = noteList + newNote
+                    draftNote = ""
+                }
+                showNotebookDialog = false
+            },
+            onClear = {
+                draftNote = ""
+                noteList = emptyList()
+                showNotebookDialog = false
+            },
+            onDismiss = {
+                draftNote = ""
+                showNotebookDialog = false
+            }
+        )
+    }
+
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.White)
-            .verticalScroll(rememberScrollState())
-            .padding(top = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        PageTitle()
-
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("八字排盘结果:", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = DarkText)
-            RawResultHeader(result)
-            InteractiveTreePanel(result)
+            PageTitle()
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("八字排盘结果:", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = DarkText)
+                RawResultHeader(result)
+                InteractiveTreePanel(
+                    result = result,
+                    isVip = currentUser?.isVip == true,
+                    onActivateVip = {
+                        if (authSession == null) {
+                            Toast.makeText(context, "请先登录后激活 VIP", Toast.LENGTH_SHORT).show()
+                            onRequireLogin()
+                        } else {
+                            showActivateDialog = true
+                        }
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+            TextButton(
+                onClick = onReset,
+                colors = ButtonDefaults.textButtonColors(containerColor = Color(0xFFFF6565), contentColor = Color.White),
+                modifier = Modifier
+                    .width(158.dp)
+                    .height(40.dp)
+            ) {
+                Text("重新排盘", fontSize = 18.sp)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
-        TextButton(
-            onClick = onReset,
-            colors = ButtonDefaults.textButtonColors(containerColor = Color(0xFFFF6565), contentColor = Color.White),
-            modifier = Modifier
-                .width(158.dp)
-                .height(40.dp)
-        ) {
-            Text("重新排盘", fontSize = 18.sp)
+        FloatingNotebookButton(
+            hasNote = noteList.isNotEmpty(),
+            x = noteButtonX,
+            y = noteButtonY,
+            maxX = maxNoteButtonX,
+            maxY = maxNoteButtonY,
+            width = buttonWidth,
+            height = buttonHeight,
+            onPositionChange = { x, y ->
+                noteButtonX = x
+                noteButtonY = y
+            },
+            onOpen = {
+                draftNote = ""
+                showNotebookDialog = true
+            }
+        )
+    }
+}
+
+@Composable
+private fun ActivateVipDialog(
+    code: String,
+    onCodeChange: (String) -> Unit,
+    isActivating: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("激活 VIP", color = RedTitle, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("请输入激活码", color = DarkText, fontSize = 14.sp)
+                BasicTextField(
+                    value = code,
+                    onValueChange = onCodeChange,
+                    enabled = !isActivating,
+                    singleLine = true,
+                    textStyle = TextStyle(color = DarkText, fontSize = 15.sp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .border(1.dp, Color(0xFFD0D0D0), RoundedCornerShape(3.dp))
+                        .padding(horizontal = 10.dp, vertical = 11.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = !isActivating) {
+                Text(if (isActivating) "激活中" else "激活", color = RedTitle)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isActivating) {
+                Text("取消", color = DarkText)
+            }
         }
-        Spacer(modifier = Modifier.height(12.dp))
+    )
+}
+
+@Composable
+private fun FourPillarNotebookDialog(
+    notes: List<String>,
+    note: String,
+    onNoteChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("四柱记事本", color = RedTitle, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (notes.isEmpty()) {
+                    Text("暂无记录", color = Color(0xFF777777), fontSize = 13.sp)
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .verticalScroll(rememberScrollState())
+                            .border(1.dp, Color(0xFFE0D2BF), RoundedCornerShape(3.dp))
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        notes.forEachIndexed { index, item ->
+                            Text(
+                                text = "${index + 1}. $item",
+                                color = DarkText,
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp
+                            )
+                        }
+                    }
+                }
+                Text("当前排盘临时备注", color = DarkText, fontSize = 14.sp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .border(1.dp, Color(0xFFD0D0D0), RoundedCornerShape(3.dp))
+                        .padding(10.dp)
+                ) {
+                    if (note.isBlank()) {
+                        Text("点击输入备注", color = Color(0xFF999999), fontSize = 14.sp)
+                    }
+                    BasicTextField(
+                        value = note,
+                        onValueChange = onNoteChange,
+                        textStyle = TextStyle(color = DarkText, fontSize = 15.sp, lineHeight = 21.sp),
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onSave) {
+                Text("保存", color = RedTitle)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onClear) {
+                    Text("清空", color = DarkText)
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消", color = DarkText)
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun FloatingNotebookButton(
+    hasNote: Boolean,
+    x: Float,
+    y: Float,
+    maxX: Float,
+    maxY: Float,
+    width: Dp,
+    height: Dp,
+    onPositionChange: (Float, Float) -> Unit,
+    onOpen: () -> Unit
+) {
+    val latestX by rememberUpdatedState(x)
+    val latestY by rememberUpdatedState(y)
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            .width(width)
+            .height(height)
+            .clip(RoundedCornerShape(22.dp))
+            .background(if (hasNote) Color(0xFFFFF1D6) else RedTitle)
+            .border(1.dp, if (hasNote) BrownText else RedTitle, RoundedCornerShape(22.dp))
+            .pointerInput(maxX, maxY) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    val pointerId = down.id
+                    val touchSlop = viewConfiguration.touchSlop
+                    var totalMove = Offset.Zero
+                    var dragged = false
+                    var currentX = latestX
+                    var currentY = latestY
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                        if (!change.pressed) {
+                            if (!dragged) {
+                                onOpen()
+                            }
+                            break
+                        }
+
+                        val delta = change.positionChange()
+                        if (delta != Offset.Zero) {
+                            totalMove += delta
+                            if (!dragged && totalMove.getDistance() > touchSlop) {
+                                dragged = true
+                            }
+                            if (dragged) {
+                                currentX = (currentX + delta.x).coerceIn(0f, maxX)
+                                currentY = (currentY + delta.y).coerceIn(0f, maxY)
+                                onPositionChange(currentX, currentY)
+                                change.consume()
+                            }
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (hasNote) "已记事" else "记事本",
+            color = if (hasNote) BrownText else Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
 @Composable
 private fun RawResultHeader(result: ChartResult) {
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        RichLine("姓名: ", result.name, "    性别: ", result.gender)
-        RichLine("历法: ", result.dateType, "    出生: ", result.birthTime)
+    val summary = result.summary
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        SummaryLine(
+            "姓名：" to Color.Black,
+            result.name to DarkText,
+            "    五行：" to Color.Black,
+            summary.wuxing.summaryValue() to DarkText
+        )
+        SummaryLine(
+            "性别：" to Color.Black,
+            summary.gender.ifBlank { result.gender } to DarkText,
+            "    胎元：" to Color.Black,
+            summary.taiyuan.summaryValue() to GreenText,
+            "    命宫：" to Color.Black,
+            summary.minggong.summaryValue() to GreenText
+        )
+        SummaryLine(
+            "节气：" to Color.Black,
+            summary.solarTerms.summaryValue() to BrownText
+        )
+        SummaryLine(
+            "起运：" to Color.Black,
+            summary.startYun.summaryValue() to GreenText,
+            "    排盘方式：" to Color.Black,
+            result.dateType to DarkText
+        )
+        SummaryLine(
+            "交运：" to Color.Black,
+            summary.handoverYun.summaryValue() to BrownText
+        )
+        SummaryLine(
+            "换运：" to Color.Black,
+            summary.changeYun.summaryValue() to BrownText
+        )
+        SummaryLine(
+            "公历：" to Color.Black,
+            summary.gregorianDatetime.ifBlank { result.birthTime } to BrownText
+        )
+        SummaryLine(
+            "农历：" to Color.Black,
+            summary.lunarDatetime.summaryValue() to BrownText,
+            summary.zodiac.takeIf { it.isNotBlank() }?.let { "（生肖$it）" }.orEmpty() to BrownText
+        )
     }
 }
+
+@Composable
+private fun SummaryLine(vararg parts: Pair<String, Color>) {
+    val annotated = buildAnnotatedString {
+        parts.forEach { (text, color) ->
+            if (text.isBlank()) return@forEach
+            withStyle(SpanStyle(color = color, fontWeight = FontWeight.Bold)) {
+                append(text)
+            }
+        }
+    }
+    Text(annotated, fontSize = 15.sp, lineHeight = 24.sp)
+}
+
+private fun String.summaryValue(): String = ifBlank { "暂无" }
 
 @Composable
 private fun RawResultText(text: String) {
@@ -321,7 +720,11 @@ private fun RawResultText(text: String) {
 }
 
 @Composable
-private fun InteractiveTreePanel(result: ChartResult) {
+private fun InteractiveTreePanel(
+    result: ChartResult,
+    isVip: Boolean,
+    onActivateVip: () -> Unit
+) {
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
     val currentMonth = remember { Calendar.getInstance().get(Calendar.MONTH) + 1 }
     var selectedLuckStart by rememberSaveable(result.birthTime) {
@@ -393,6 +796,7 @@ private fun InteractiveTreePanel(result: ChartResult) {
 
         LinkedDetailGrid(
             result = result,
+            isVip = isVip,
             yearItem = result.treeItems.firstOrNull { it.year == selectedYear },
             monthItem = monthItems.firstOrNull { it.month == selectedMonth },
             dayItem = dayItems.firstOrNull { it.idx == selectedDay },
@@ -404,6 +808,7 @@ private fun InteractiveTreePanel(result: ChartResult) {
             selectedDay = selectedDay,
             loadingMonths = loadingMonths,
             loadingDays = loadingDays,
+            onActivateVip = onActivateVip,
             onLuckSelected = { luck ->
                 selectedLuckStart = luck.startYear
                 selectedYear = if (currentYear in luck.startYear until (luck.startYear + 10)) currentYear else luck.startYear
@@ -480,6 +885,7 @@ private fun TreeItemStrip(
 @Composable
 private fun LinkedDetailGrid(
     result: ChartResult,
+    isVip: Boolean,
     yearItem: BaziTreeItem?,
     monthItem: BaziTreeItem?,
     dayItem: BaziTreeItem?,
@@ -491,6 +897,7 @@ private fun LinkedDetailGrid(
     selectedDay: Int?,
     loadingMonths: Boolean,
     loadingDays: Boolean,
+    onActivateVip: () -> Unit,
     onLuckSelected: (ChartLuckItem) -> Unit,
     onYearSelected: (BaziTreeItem) -> Unit,
     onMonthSelected: (BaziTreeItem) -> Unit,
@@ -637,6 +1044,7 @@ private fun LinkedDetailGrid(
             dizhiNote = calcLiuyi(zhiRow.drop(1), tianganOnly = false),
             dayunShensha = luckItem?.stars.orEmpty(),
             wenChangText = buildWenChangText(result.pillars.day.gan),
+            isVip = isVip,
             timelineLabelWidth = timelineLabelWidth,
             timelineCellWidth = timelineCellWidth,
             monthCellWidth = monthCellWidth,
@@ -647,6 +1055,7 @@ private fun LinkedDetailGrid(
             selectedDay = selectedDay,
             loadingMonths = loadingMonths,
             loadingDays = loadingDays,
+            onActivateVip = onActivateVip,
             onLuckSelected = onLuckSelected,
             onYearSelected = onYearSelected,
             onMonthSelected = onMonthSelected,
@@ -683,6 +1092,7 @@ private fun TimelineRows(
     dizhiNote: String,
     dayunShensha: String,
     wenChangText: String,
+    isVip: Boolean,
     timelineLabelWidth: Dp,
     timelineCellWidth: Dp,
     monthCellWidth: Dp,
@@ -693,6 +1103,7 @@ private fun TimelineRows(
     selectedDay: Int?,
     loadingMonths: Boolean,
     loadingDays: Boolean,
+    onActivateVip: () -> Unit,
     onLuckSelected: (ChartLuckItem) -> Unit,
     onYearSelected: (BaziTreeItem) -> Unit,
     onMonthSelected: (BaziTreeItem) -> Unit,
@@ -781,34 +1192,64 @@ private fun TimelineRows(
             scrollItems = true
         )
     }
-    TableRow(
-        cells = listOf("天干留意:", tianganNote),
-        background = LightGray,
-        height = 42.dp,
-        cellWidth = timelineCellWidth * 10,
-        labelWidth = timelineLabelWidth
-    )
-    TableRow(
-        cells = listOf("地支留意:", dizhiNote),
-        background = Color.White,
-        height = 58.dp,
-        cellWidth = timelineCellWidth * 10,
-        labelWidth = timelineLabelWidth
-    )
-    TableRow(
-        cells = listOf("大运神煞:", dayunShensha),
-        background = LightGray,
-        height = 58.dp,
-        cellWidth = timelineCellWidth * 10,
-        labelWidth = timelineLabelWidth
-    )
-    TableRow(
-        cells = listOf("文昌阵:", wenChangText),
-        background = Color.White,
-        height = 96.dp,
-        cellWidth = timelineCellWidth * 10,
-        labelWidth = timelineLabelWidth
-    )
+    if (isVip) {
+        TableRow(
+            cells = listOf("天干留意:", tianganNote),
+            background = LightGray,
+            height = 42.dp,
+            cellWidth = timelineCellWidth * 10,
+            labelWidth = timelineLabelWidth
+        )
+        TableRow(
+            cells = listOf("地支留意:", dizhiNote),
+            background = Color.White,
+            height = 58.dp,
+            cellWidth = timelineCellWidth * 10,
+            labelWidth = timelineLabelWidth
+        )
+        TableRow(
+            cells = listOf("大运神煞:", dayunShensha),
+            background = LightGray,
+            height = 58.dp,
+            cellWidth = timelineCellWidth * 10,
+            labelWidth = timelineLabelWidth
+        )
+        TableRow(
+            cells = listOf("文昌阵:", wenChangText),
+            background = Color.White,
+            height = 96.dp,
+            cellWidth = timelineCellWidth * 10,
+            labelWidth = timelineLabelWidth
+        )
+    } else {
+        VipLockedRows(onActivateVip = onActivateVip)
+    }
+}
+
+@Composable
+private fun VipLockedRows(onActivateVip: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(254.dp)
+            .background(Color(0xFFFFFBF3))
+            .border(0.5.dp, Color(0xFFD0A77A))
+            .padding(18.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("开通 VIP 后查看阵法分析", color = DarkText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            TextButton(
+                onClick = onActivateVip,
+                colors = ButtonDefaults.textButtonColors(containerColor = RedTitle, contentColor = Color.White),
+                modifier = Modifier
+                    .width(138.dp)
+                    .height(38.dp)
+            ) {
+                Text("激活 VIP", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
 }
 
 private val tianganSet = setOf("甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸")

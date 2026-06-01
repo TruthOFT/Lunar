@@ -3,6 +3,7 @@ package com.lunar.lunar_backend.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.lunar.lunar_backend.dto.AuthResponse;
+import com.lunar.lunar_backend.dto.LicenceVipStatus;
 import com.lunar.lunar_backend.dto.LoginRequest;
 import com.lunar.lunar_backend.dto.RegisterRequest;
 import com.lunar.lunar_backend.dto.UserResponse;
@@ -11,8 +12,10 @@ import com.lunar.lunar_backend.common.ErrorCode;
 import com.lunar.lunar_backend.exception.ApiException;
 import com.lunar.lunar_backend.mapper.LunarUserMapper;
 import com.lunar.lunar_backend.service.AuthService;
+import com.lunar.lunar_backend.service.LicenceService;
 import com.lunar.lunar_backend.util.JwtUtil;
 import com.lunar.lunar_backend.util.Md5Util;
+import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -20,6 +23,9 @@ import org.springframework.util.StringUtils;
 public class AuthServiceImpl extends ServiceImpl<LunarUserMapper, LunarUser> implements AuthService {
 
     private static final String PASSWORD_SALT = "lunar_password_salt_2026";
+
+    @Resource
+    private LicenceService licenceService;
 
     @Override
     public AuthResponse register(RegisterRequest request) {
@@ -82,7 +88,15 @@ public class AuthServiceImpl extends ServiceImpl<LunarUserMapper, LunarUser> imp
     }
 
     private UserResponse toUserResponse(LunarUser user) {
-        return new UserResponse(user.getId(), user.getAccount(), user.getNickname());
+        LicenceVipStatus vipStatus = licenceService.currentVipStatus(user.getId());
+        return new UserResponse(
+                user.getId(),
+                user.getAccount(),
+                user.getNickname(),
+                vipStatus.isVip(),
+                vipStatus.vipExpireTime(),
+                vipStatus.licenceType()
+        );
     }
 
     private String encryptPassword(String password) {

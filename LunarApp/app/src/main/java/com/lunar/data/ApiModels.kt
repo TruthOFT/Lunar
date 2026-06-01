@@ -26,7 +26,10 @@ data class AuthResponse(
 data class UserInfo(
     val id: Long,
     val account: String,
-    val nickname: String
+    val nickname: String,
+    val isVip: Boolean = false,
+    val vipExpireTime: String = "",
+    val licenceType: String = ""
 )
 
 @Serializable
@@ -53,6 +56,18 @@ data class ChartRecordItem(
 data class AiAnalyzeRequest(
     val recordId: Long,
     val resultJson: String
+)
+
+@Serializable
+data class LicenceActivateRequest(
+    val licenceCode: String
+)
+
+@Serializable
+data class LicenceActivateResponse(
+    val isVip: Boolean,
+    val vipExpireTime: String,
+    val licenceType: String
 )
 
 data class AuthSession(

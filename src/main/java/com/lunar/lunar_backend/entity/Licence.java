@@ -8,21 +8,27 @@ import java.time.LocalDateTime;
 import lombok.Data;
 
 @Data
-@TableName("lunar_user")
-public class LunarUser {
+@TableName("licence")
+public class Licence {
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private String account;
+    private String licenceCode;
 
-    private String password;
+    private Long userId;
 
-    private String nickname;
+    private String licenceType;
 
-    private Integer tokenVersion;
+    private Integer durationDays;
 
-    private Integer role;
+    private LocalDateTime expireTime;
+
+    private Integer status;
+
+    private LocalDateTime usedTime;
+
+    private String remark;
 
     private LocalDateTime createTime;
 

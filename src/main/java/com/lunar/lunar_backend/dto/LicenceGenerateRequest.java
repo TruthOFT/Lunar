@@ -1,0 +1,10 @@
+package com.lunar.lunar_backend.dto;
+
+public record LicenceGenerateRequest(
+        Integer count,
+        String licenceType,
+        Integer durationDays,
+        String expireTime,
+        String remark
+) {
+}

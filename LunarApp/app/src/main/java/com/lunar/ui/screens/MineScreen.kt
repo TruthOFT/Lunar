@@ -132,6 +132,10 @@ private fun UserBlock(user: UserInfo, onLogout: () -> Unit) {
         InfoLine(label = "用户 ID", value = user.id.toString())
         InfoLine(label = "账号", value = user.account)
         InfoLine(label = "昵称", value = user.nickname)
+        InfoLine(label = "会员状态", value = if (user.isVip) "VIP 用户" else "普通用户")
+        if (user.isVip) {
+            InfoLine(label = "VIP 到期时间", value = user.vipExpireTime)
+        }
         Spacer(modifier = Modifier.height(24.dp))
         PrimaryButton(text = "退出登录", onClick = onLogout, color = RedTitle)
     }

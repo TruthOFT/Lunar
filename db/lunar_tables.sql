@@ -4,11 +4,13 @@
   `password` varchar(64) NOT NULL COMMENT 'MD5加盐密码',
   `nickname` varchar(64) NOT NULL DEFAULT '' COMMENT '昵称',
   `tokenVersion` int NOT NULL DEFAULT 1 COMMENT 'token版本',
+  `role` tinyint NOT NULL DEFAULT 0 COMMENT '角色 0普通用户 1管理员',
   `createTime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updateTime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `isDelete` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 0否 1是',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_account` (`account`),
+  KEY `idx_role` (`role`),
   KEY `idx_isDelete` (`isDelete`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
