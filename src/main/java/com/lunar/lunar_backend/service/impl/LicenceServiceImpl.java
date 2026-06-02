@@ -2,11 +2,15 @@ package com.lunar.lunar_backend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.lunar.lunar_backend.dto.LicenceActivateRequest;
 import com.lunar.lunar_backend.dto.LicenceActivateResponse;
+import com.lunar.lunar_backend.dto.LicenceAdminResponse;
 import com.lunar.lunar_backend.dto.LicenceGenerateRequest;
 import com.lunar.lunar_backend.dto.LicenceResponse;
+import com.lunar.lunar_backend.dto.LicenceUpdateRequest;
 import com.lunar.lunar_backend.dto.LicenceVipStatus;
 import com.lunar.lunar_backend.entity.Licence;
 import com.lunar.lunar_backend.exception.ApiException;
@@ -15,7 +19,6 @@ import com.lunar.lunar_backend.service.LicenceService;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -43,9 +46,11 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     public List<LicenceResponse> generate(LicenceGenerateRequest request) {
         int count = validCount(request == null ? null : request.count());
         int durationDays = validDurationDays(request == null ? null : request.durationDays());
-        LocalDateTime expireTime = parseExpireTime(request == null ? null : request.expireTime());
         String licenceType = defaultText(request == null ? null : request.licenceType(), DEFAULT_LICENCE_TYPE);
         String remark = defaultText(request == null ? null : request.remark(), "");
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expireTime = now.plusDays(durationDays);
 
         List<LicenceResponse> result = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -117,6 +122,54 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
         return new LicenceVipStatus(true, DATE_TIME_FORMATTER.format(latestExpireTime), licenceType);
     }
 
+    @Override
+    public IPage<LicenceAdminResponse> listLicences(Integer page, Integer pageSize, Integer status) {
+        int p = (page == null || page < 1) ? 1 : page;
+        int ps = (pageSize == null || pageSize < 1) ? 10 : Math.min(pageSize, 100);
+        LambdaQueryWrapper<Licence> wrapper = new LambdaQueryWrapper<Licence>()
+                .orderByDesc(Licence::getCreateTime);
+        if (status != null) {
+            wrapper.eq(Licence::getStatus, status);
+        }
+        return page(new Page<>(p, ps), wrapper).convert(this::toAdminResponse);
+    }
+
+    @Override
+    public void updateLicence(Long id, LicenceUpdateRequest request) {
+        if (id == null) {
+            throw new ApiException(4000, "ID cannot be null");
+        }
+        if (getById(id) == null) {
+            throw new ApiException(4040, "Licence not found");
+        }
+        LambdaUpdateWrapper<Licence> wrapper = new LambdaUpdateWrapper<Licence>()
+                .eq(Licence::getId, id);
+        if (StringUtils.hasText(request.licenceType())) {
+            wrapper.set(Licence::getLicenceType, request.licenceType().trim());
+        }
+        if (request.durationDays() != null) {
+            int days = request.durationDays();
+            if (days < 1 || days > MAX_DURATION_DAYS) {
+                throw new ApiException(4000, "Duration days must be between 1 and 3650");
+            }
+            wrapper.set(Licence::getDurationDays, days);
+        }
+        if (request.remark() != null) {
+            wrapper.set(Licence::getRemark, request.remark().trim());
+        }
+        update(wrapper);
+    }
+
+    @Override
+    public void deleteLicence(Long id) {
+        if (id == null) {
+            throw new ApiException(4000, "ID cannot be null");
+        }
+        if (!removeById(id)) {
+            throw new ApiException(4040, "Licence not found");
+        }
+    }
+
     private String nextUniqueCode() {
         for (int i = 0; i < MAX_GENERATE_RETRY; i++) {
             String code = nextCode();
@@ -159,17 +212,6 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
         return value;
     }
 
-    private LocalDateTime parseExpireTime(String expireTime) {
-        if (!StringUtils.hasText(expireTime)) {
-            return null;
-        }
-        try {
-            return LocalDateTime.parse(expireTime.trim(), DATE_TIME_FORMATTER);
-        } catch (DateTimeParseException exception) {
-            throw new ApiException(4000, "Expire time format must be yyyy-MM-dd HH:mm:ss");
-        }
-    }
-
     private LicenceResponse toResponse(Licence licence) {
         return new LicenceResponse(
                 licence.getId(),
@@ -179,6 +221,21 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
                 licence.getExpireTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getExpireTime()),
                 licence.getStatus(),
                 licence.getRemark(),
+                licence.getCreateTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getCreateTime())
+        );
+    }
+
+    private LicenceAdminResponse toAdminResponse(Licence licence) {
+        return new LicenceAdminResponse(
+                licence.getId(),
+                licence.getLicenceCode(),
+                licence.getLicenceType(),
+                licence.getDurationDays(),
+                licence.getExpireTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getExpireTime()),
+                licence.getStatus(),
+                licence.getRemark(),
+                licence.getUserId(),
+                licence.getUsedTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getUsedTime()),
                 licence.getCreateTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getCreateTime())
         );
     }

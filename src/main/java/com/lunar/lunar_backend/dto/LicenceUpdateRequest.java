@@ -1,7 +1,6 @@
 package com.lunar.lunar_backend.dto;
 
-public record LicenceGenerateRequest(
-        Integer count,
+public record LicenceUpdateRequest(
         String licenceType,
         Integer durationDays,
         String remark
