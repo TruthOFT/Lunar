@@ -422,6 +422,10 @@ fun BaziResultScreen(
                         }
                     }
                 )
+                Spacer(modifier = Modifier.height(10.dp))
+                PromoDivider()
+                Spacer(modifier = Modifier.height(10.dp))
+                DayunDetailPanel(result)
             }
 
             Spacer(modifier = Modifier.height(18.dp))
@@ -788,6 +792,147 @@ private fun calcBoneWeight(result: ChartResult): Pair<String, String>? {
     val key = if (fen > 0) "${liang}两${qian}钱${fen}分" else "${liang}两${qian}钱"
     val verdict = BONE_VERDICTS[key] ?: BONE_VERDICTS["${liang}两${qian}钱"].orEmpty()
     return weight to verdict
+}
+
+private fun ganzhiOfYear(year: Int): String {
+    val offset = ((year - 1984) % 60 + 60) % 60
+    return TIANGAN[offset % 10] + DIZHI[offset % 12]
+}
+
+/** 每格按干支拆成 stem+branch，分别按五行配色。vertical=true 竖排（上干下支），否则横排。 */
+@Composable
+private fun GanZhiTableRow(
+    label: String,
+    gzCells: List<String>,
+    background: Color,
+    height: Dp,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
+    vertical: Boolean,
+    overrideColor: Color? = null
+) {
+    Row(modifier = Modifier.height(height)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxSize()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(label, color = DarkText, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        }
+        gzCells.forEach { gz ->
+            Box(
+                modifier = Modifier
+                    .width(cellWidth)
+                    .fillMaxSize()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (gz.length == 2) {
+                    val stem = gz[0].toString()
+                    val branch = gz[1].toString()
+                    val stemC = overrideColor ?: stemColor(stem)
+                    val branchC = overrideColor ?: stemColor(branch)
+                    if (vertical) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(stem, color = stemC, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold)
+                            Text(branch, color = branchC, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(stem, color = stemC, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold)
+                            Text(branch, color = branchC, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    Text(gz, color = overrideColor ?: DarkText, fontSize = fontSize, lineHeight = lineHeight, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DayunDetailPanel(result: ChartResult) {
+    val luckItems = result.luckItems.take(9)
+    if (luckItems.isEmpty()) return
+    val dayGan = result.pillars.day.gan
+    val configuration = LocalConfiguration.current
+    val screenW = configuration.screenWidthDp.dp
+    val labelW = 48.dp
+    val cellW = ((screenW - 20.dp - labelW) / luckItems.size).coerceAtLeast(28.dp)
+    val fs = 10.sp
+    val lh = 12.sp
+
+    fun verticalChars(s: String) = s.toCharArray().joinToString("\n")
+
+    val ageRow = listOf("岁年:") + luckItems.map { "%02d岁".format(it.age) }
+    val startYearRow = listOf("大运始于:") + luckItems.map { it.startYear.toString() }
+    val ganGodRow = listOf("天干十神:") + luckItems.map {
+        verticalChars((it.god.split("/").firstOrNull() ?: "").trim())
+    }
+    val dayunGz = luckItems.map { it.gz }
+    val dzGodRow = listOf("地支十神:") + luckItems.map { li ->
+        val zhi = li.gz.drop(1).take(1)
+        val idx = DIZHI.indexOf(zhi)
+        if (idx < 0) "" else verticalChars(
+            DZ_CANGGAN[idx].map { ch ->
+                val g = ch.toString()
+                "$g${getShishen(g, dayGan)}"
+            }.joinToString("")
+        )  
+    }
+    val stateRow = listOf("十二长生:") + luckItems.map { it.state }
+    val endYearRow = listOf("大运止于:") + luckItems.map { (it.startYear + 9).toString() }
+    val liunianGzPerRow = (0..9).map { i ->
+        luckItems.map { li -> ganzhiOfYear(li.startYear + i) }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFFD0A77A))
+    ) {
+        TableRow(ageRow, MidGray, height = 26.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        TableRow(startYearRow, LightGray, height = 26.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        TableRow(ganGodRow, MidGray, height = 36.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        GanZhiTableRow(
+            label = "大运:",
+            gzCells = dayunGz,
+            background = LightGray,
+            height = 36.dp,
+            labelWidth = labelW,
+            cellWidth = cellW,
+            fontSize = 14.sp,
+            lineHeight = 16.sp,
+            vertical = false,
+            overrideColor = RedTitle
+        )
+        TableRow(dzGodRow, MidGray, height = 110.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        TableRow(stateRow, LightGray, height = 26.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        TableRow(endYearRow, MidGray, height = 26.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        liunianGzPerRow.forEachIndexed { i, gzs ->
+            GanZhiTableRow(
+                label = if (i == 0) "流年:" else "",
+                gzCells = gzs,
+                background = if (i % 2 == 0) LightGray else MidGray,
+                height = 32.dp,
+                labelWidth = labelW,
+                cellWidth = cellW,
+                fontSize = fs,
+                lineHeight = lh,
+                vertical = true,
+                overrideColor = DarkText
+            )
+        }
+    }
 }
 
 @Composable
@@ -1661,6 +1806,8 @@ private fun <T> TimelineCell(
 ) {
     val cellText = text(item)
     val isSelected = selected(item)
+    val fs = if (cellWidth < 32.dp) 10.sp else 11.sp
+    val lh = if (cellWidth < 32.dp) 12.sp else 14.sp
     Box(
         modifier = Modifier
             .width(cellWidth)
@@ -1671,16 +1818,28 @@ private fun <T> TimelineCell(
             .padding(horizontal = 2.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = cellText,
-            color = stemColor(cellText),
-            fontSize = if (cellWidth < 32.dp) 10.sp else 11.sp,
-            lineHeight = if (cellWidth < 32.dp) 12.sp else 14.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
-        )
+        if (isGanZhiPair(cellText)) {
+            val stem = cellText[0].toString()
+            val branch = cellText[1].toString()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(stem, color = stemColor(stem), fontSize = fs, lineHeight = lh, fontWeight = FontWeight.Bold)
+                Text(branch, color = stemColor(branch), fontSize = fs, lineHeight = lh, fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Text(
+                text = cellText,
+                color = stemColor(cellText),
+                fontSize = fs,
+                lineHeight = lh,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
+
+private fun isGanZhiPair(s: String): Boolean =
+    s.length == 2 && s[0].toString() in TIANGAN && s[1].toString() in DIZHI
 
 private fun List<ChartLuckItem>.findLuckForYear(year: Int?): ChartLuckItem? {
     val y = year ?: return null
@@ -2340,7 +2499,9 @@ private fun TableRow(
     cellWidth: Dp = 80.dp,
     bigIndexes: Set<Int> = emptySet(),
     colors: List<Color> = emptyList(),
-    textColor: Color = DarkText
+    textColor: Color = DarkText,
+    fontSize: androidx.compose.ui.unit.TextUnit = 12.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 17.sp
 ) {
     Row(modifier = Modifier.height(height)) {
         cells.forEachIndexed { index, cell ->
@@ -2351,14 +2512,14 @@ private fun TableRow(
                     .fillMaxSize()
                     .background(background)
                     .border(0.5.dp, Color.White)
-                    .padding(horizontal = 3.dp),
+                    .padding(horizontal = 2.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = cell,
                     color = colors.getOrNull(index) ?: textColor,
-                    fontSize = if (index in bigIndexes) 24.sp else 12.sp,
-                    lineHeight = if (index in bigIndexes) 26.sp else 17.sp,
+                    fontSize = if (index in bigIndexes) 24.sp else fontSize,
+                    lineHeight = if (index in bigIndexes) 26.sp else lineHeight,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
