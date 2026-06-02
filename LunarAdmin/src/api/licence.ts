@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:8080'
+const BASE_URL = 'http://localhost:7000'
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('admin_token') ?? ''
