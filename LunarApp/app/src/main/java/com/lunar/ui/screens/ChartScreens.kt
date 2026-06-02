@@ -2249,8 +2249,9 @@ private fun DayunGridFromResponse(result: BaziResponse) {
             cellWidth = 58.dp,
             labelWidth = 58.dp
         )
-        TableRow(
-            cells = listOf("地支十神") + result.dayunDetail.dizhiTenGod.map { it.joinToString("\n") },
+        DizhiTenGodTableRow(
+            label = "地支十神",
+            items = result.dayunDetail.dizhiTenGod,
             background = LightGray,
             height = 104.dp,
             cellWidth = 58.dp,
@@ -2449,8 +2450,9 @@ private fun DayunDetailGrid(result: BaziResponse) {
             cellWidth = 44.dp,
             labelWidth = 74.dp
         )
-        TableRow(
-            cells = listOf("地支十神:") + result.dayunDetail.dizhiTenGod.map { it.joinToString("\n") },
+        DizhiTenGodTableRow(
+            label = "地支十神:",
+            items = result.dayunDetail.dizhiTenGod,
             background = Color.White,
             height = 112.dp,
             cellWidth = 44.dp,
@@ -2523,6 +2525,65 @@ private fun TableRow(
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
+            }
+        }
+    }
+}
+
+/** 地支十神专用 row — 每项单独 Text，Column spacedBy 间隔。 */
+@Composable
+private fun DizhiTenGodTableRow(
+    label: String,
+    items: List<List<String>>,
+    background: Color,
+    height: Dp = 104.dp,
+    labelWidth: Dp = 58.dp,
+    cellWidth: Dp = 58.dp,
+    textColor: Color = DarkText,
+    fontSize: androidx.compose.ui.unit.TextUnit = 12.sp
+) {
+    Row(modifier = Modifier.height(height)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxSize()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                color = textColor,
+                fontSize = fontSize,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
+        items.forEach { subItems ->
+            Box(
+                modifier = Modifier
+                    .width(cellWidth)
+                    .fillMaxSize()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    subItems.forEach { item ->
+                        Text(
+                            text = item,
+                            color = textColor,
+                            fontSize = fontSize,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
         }
     }
