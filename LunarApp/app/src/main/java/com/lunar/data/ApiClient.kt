@@ -5,6 +5,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import okhttp3.OkHttpClient
 import retrofit2.HttpException
 import retrofit2.Retrofit
@@ -59,10 +61,10 @@ private val baziRetrofit: Retrofit = Retrofit.Builder()
     .client(
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
-            .callTimeout(180, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
             .build()
     )
     .addConverterFactory(jsonConverterFactory)
@@ -164,25 +166,34 @@ suspend fun fetchBaziCalculate(
         solar.hour,
         solar.minute
     )
-    val treeResponse = baziApi.calculate(
-        LanxingBaziRequest(
-            gender = gender,
-            date_type = dateType,
-            birth_date = birthTime,
-            use_true_solar = false
-        )
-    )
+    val pair = coroutineScope {
+        val treeDeferred = async {
+            baziApi.calculate(
+                LanxingBaziRequest(
+                    gender = gender,
+                    date_type = dateType,
+                    birth_date = birthTime,
+                    use_true_solar = false
+                )
+            )
+        }
+        val textDeferred = async {
+            baziApi.calculateText(
+                LanxingBaziTextRequest(
+                    gender = gender,
+                    date_type = dateType,
+                    birth_date = birthTime,
+                    use_true_solar = false
+                )
+            )
+        }
+        Pair(treeDeferred.await(), textDeferred.await())
+    }
+    val treeResponse = pair.first
+    val textResponse = pair.second
     if (treeResponse.code != 200) {
         throw ApiBusinessException(treeResponse.code, treeResponse.msg)
     }
-    val textResponse = baziApi.calculateText(
-        LanxingBaziTextRequest(
-            gender = gender,
-            date_type = dateType,
-            birth_date = birthTime,
-            use_true_solar = false
-        )
-    )
     if (textResponse.code != 200) {
         throw ApiBusinessException(textResponse.code, textResponse.msg)
     }
@@ -259,6 +270,7 @@ private fun parseLuckItems(rawText: String): List<ChartLuckItem> {
                 stars = cells.getOrElse(5) { "" }
             )
         }
+        .filter { it.age > 0 } // 丢掉首项「0 岁/出生年」虚位，与网站对齐从起运岁开始
 }
 
 private fun parseConflictNotes(rawText: String): ChartConflictNotes {

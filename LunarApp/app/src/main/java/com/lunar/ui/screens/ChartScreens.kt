@@ -2,6 +2,7 @@
 
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -53,8 +55,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -405,6 +409,7 @@ fun BaziResultScreen(
             ) {
                 Text("八字排盘结果:", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = DarkText)
                 RawResultHeader(result)
+                CoarseChartPanel(result)
                 InteractiveTreePanel(
                     result = result,
                     isVip = currentUser?.isVip == true,
@@ -638,6 +643,241 @@ private fun FloatingNotebookButton(
 }
 
 @Composable
+private fun CoarseNoteRow(label: String, value: String, background: Color) {
+    if (value.isBlank()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(background)
+            .border(0.5.dp, Color.White)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Text(label, fontSize = 13.sp, color = DarkText, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(value, fontSize = 13.sp, color = DarkText)
+    }
+}
+
+@Composable
+private fun PromoDivider() {
+    Image(
+        painter = painterResource(com.lunar.R.drawable.promo_banner),
+        contentDescription = null,
+        contentScale = ContentScale.FillWidth,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+// 袁天罡称骨：4 张表查重，按总重查评语
+private val YEAR_BONE_FEN = mapOf(
+    "甲子" to 12,"乙丑" to 9,"丙寅" to 6,"丁卯" to 7,"戊辰" to 12,"己巳" to 5,
+    "庚午" to 9,"辛未" to 8,"壬申" to 7,"癸酉" to 8,
+    "甲戌" to 15,"乙亥" to 9,"丙子" to 16,"丁丑" to 8,"戊寅" to 8,"己卯" to 19,
+    "庚辰" to 12,"辛巳" to 6,"壬午" to 8,"癸未" to 7,
+    "甲申" to 5,"乙酉" to 15,"丙戌" to 6,"丁亥" to 16,"戊子" to 15,"己丑" to 7,
+    "庚寅" to 9,"辛卯" to 12,"壬辰" to 10,"癸巳" to 7,
+    "甲午" to 15,"乙未" to 6,"丙申" to 5,"丁酉" to 14,"戊戌" to 14,"己亥" to 9,
+    "庚子" to 7,"辛丑" to 7,"壬寅" to 9,"癸卯" to 12,
+    "甲辰" to 8,"乙巳" to 7,"丙午" to 13,"丁未" to 5,"戊申" to 14,"己酉" to 5,
+    "庚戌" to 9,"辛亥" to 17,"壬子" to 5,"癸丑" to 7,
+    "甲寅" to 12,"乙卯" to 8,"丙辰" to 8,"丁巳" to 6,"戊午" to 19,"己未" to 6,
+    "庚申" to 8,"辛酉" to 16,"壬戌" to 10,"癸亥" to 6
+) // 单位：分（1钱=10分，1两=10钱）
+private val MONTH_BONE_FEN = listOf(0, 60, 70, 180, 90, 50, 160, 90, 150, 180, 80, 90, 50)
+private val DAY_BONE_FEN = listOf(
+    0, 50,100,80,150,160,150,80,160,80,160,
+    90,170,80,170,100,80,90,180,50,150,
+    100,90,80,90,150,180,70,80,160,60
+)
+private val HOUR_BONE_FEN = mapOf(
+    "子" to 160,"丑" to 60,"寅" to 70,"卯" to 100,"辰" to 90,"巳" to 160,
+    "午" to 100,"未" to 80,"申" to 80,"酉" to 90,"戌" to 60,"亥" to 60
+)
+private val LUNAR_MONTH_NAMES = mapOf(
+    "正月" to 1,"一月" to 1,"二月" to 2,"三月" to 3,"四月" to 4,"五月" to 5,"六月" to 6,
+    "七月" to 7,"八月" to 8,"九月" to 9,"十月" to 10,"冬月" to 11,"十一月" to 11,"腊月" to 12,"十二月" to 12
+)
+private val LUNAR_DAY_NAMES = mapOf(
+    "初一" to 1,"初二" to 2,"初三" to 3,"初四" to 4,"初五" to 5,"初六" to 6,"初七" to 7,"初八" to 8,"初九" to 9,"初十" to 10,
+    "十一" to 11,"十二" to 12,"十三" to 13,"十四" to 14,"十五" to 15,"十六" to 16,"十七" to 17,"十八" to 18,"十九" to 19,"二十" to 20,
+    "廿一" to 21,"廿二" to 22,"廿三" to 23,"廿四" to 24,"廿五" to 25,"廿六" to 26,"廿七" to 27,"廿八" to 28,"廿九" to 29,"三十" to 30
+)
+
+private fun parseLunar(s: String): Triple<Int, Int, String>? {
+    // 形如 "2026 年四月十六 子时"
+    val m = Regex("(.+?)月(.+?)\\s*(.)时").find(s) ?: return null
+    val mo = LUNAR_MONTH_NAMES["${m.groupValues[1].takeLast(2)}月"] ?: LUNAR_MONTH_NAMES["${m.groupValues[1].takeLast(1)}月"] ?: return null
+    val dy = LUNAR_DAY_NAMES[m.groupValues[2].trim()] ?: return null
+    val hr = m.groupValues[3]
+    return Triple(mo, dy, hr)
+}
+
+private val BONE_VERDICTS: Map<String, String> = mapOf(
+    "2两1钱" to "短命非业谓大空，灵魂入夜归阴去，命运不好少福禄，行善积德子孙旺。",
+    "2两2钱" to "身寒骨冷苦伶仃，此命推来行乞人，劳劳碌碌无度日，终生困苦泪淋淋。",
+    "2两3钱" to "此命推来骨格轻，求谋作事事难成，妻儿兄弟应难许，别处他乡作散人。",
+    "2两4钱" to "此命推来福禄无，门庭困苦总难荣，六亲骨肉皆无靠，流到他乡作老翁。",
+    "2两5钱" to "此命推来事不成，知识同行有误人，妻儿兄弟难依靠，奔走他乡作散人。",
+    "2两6钱" to "平生衣禄苦中求，独自经营事不休，离祖出门宜早计，晚来衣禄自无忧。",
+    "2两7钱" to "一生作事少商量，难靠祖宗作主张，独马单枪空做去，早来晚岁总无长。",
+    "2两8钱" to "一生作事似飘蓬，祖宗产业在梦中，若不过房改名姓，也当移徙二三通。",
+    "2两9钱" to "初年运限未曾享，纵有功名在后头，须过四旬方可立，移居改姓事休休。",
+    "3两" to "劳劳碌碌苦中求，东奔西走何日休，若使终身勤与俭，老来稍可免忧愁。",
+    "3两1钱" to "忙忙碌碌苦中求，何日云开见日头，难得祖基家可立，中年衣食渐无忧。",
+    "3两2钱" to "初年作事事难成，欲靠功名身不闲，难把瓢儿来比挂，得抛得歇渐无忧。",
+    "3两3钱" to "早年做事事难成，百年勤劳枉费心，半世自如流水去，后来运到得黄金。",
+    "3两4钱" to "此命福气果如何，僧道门中衣禄多，离祖出家方得稳，终朝拜佛念弥陀。",
+    "3两5钱" to "生平福量不周全，祖业根基觉少传，营事生涯宜守旧，时来衣食胜从前。",
+    "3两6钱" to "不须劳碌过平生，独自成家显六亲，离祖出门宜早计，晚来衣禄自然增。",
+    "3两7钱" to "此命般般事不成，弟兄少力自孤行，虽然祖业须微有，来寻盛少又消停。",
+    "3两8钱" to "一生骨肉最清高，早入皇都姓名标，待看年将三十六，蓝衫脱去换红袍。",
+    "3两9钱" to "此命终身运不通，劳劳作事尽皆空，苦心竭力成家计，到得那时在梦中。",
+    "4两" to "平生衣禄是绵长，件件心中自主张，前面风霜多受过，从来必定享安康。",
+    "4两1钱" to "此命推来旺末年，妻荣子贵自怡然，平生原有滔滔福，可有財也有錢。",
+    "4两2钱" to "得宽怀处且宽怀，何用双眉皱不开，若使中年命运济，那时名利一齐来。",
+    "4两3钱" to "为人心性最聪明，作事轩昂近贵人，衣禄一生天数定，不须劳碌是丰享。",
+    "4两4钱" to "万事由天莫苦求，须知福禄自悠悠，平生且听天公定，富贵荣华迟早来。",
+    "4两5钱" to "名利推求竟若何，前番辛苦后奔波，命中难养男与女，骨肉扶持也不多。",
+    "4两6钱" to "东西南北尽皆通，出姓移名更觉隆，衣禄无亏天数定，中年晚景一般同。",
+    "4两7钱" to "此命推来事不同，为人能干异凡庸，中年还有逍遥福，不比前番目下穷。",
+    "4两8钱" to "幼年运道未曾享，没有功名在后头，须过四旬方成器，得来衣禄胜前番。",
+    "4两9钱" to "此命推来福不轻，自成自立显门庭，从来富贵人钦敬，使婢差奴过一生。",
+    "5两" to "为人作事自勤劳，傲气凌人胆气豪，富贵荣华来祖业，平生衣禄自坚牢。",
+    "5两1钱" to "一世荣华事事通，不须劳碌自亨通，弟兄叔侄皆如意，家业丰隆自始终。",
+    "5两2钱" to "一世享通事事能，不须劳碌自然丰，宗祖产业留得多，安享荣华自如愿。",
+    "5两3钱" to "此命福气大不同，公侯卿相在其中，钱粮家有数千石，门前奴仆唤西东。",
+    "5两4钱" to "此格推来礼仪通，一生福禄用无穷，甜酸苦辣皆尝过，财源滚滚似春风。",
+    "5两5钱" to "走马扬鞭争名利，少年作事费筹论，一朝福禄源源至，富贵荣华显六亲。",
+    "5两6钱" to "此格推来福泽宏，兴家立业在其中，一生衣禄安排定，却是人间一福翁。",
+    "5两7钱" to "福禄丰盈万事全，一生荣耀显双亲，名扬威振人钦敬，处世逍遥似遇春。",
+    "5两8钱" to "平生福禄自然来，名利兼全福禄偕，雁塔提名为贵客，紫袍金带走金阶。",
+    "5两9钱" to "细推此命福不轻，安富尊荣享现成，员外科甲虽不就，财源也有数千金。",
+    "6两" to "一朝金榜快提名，显祖荣宗官爵明，一生衣食皆无亏，回头还家拜祖宗。",
+    "6两1钱" to "不做朝中金榜客，定为世上大财翁，聪明天赋经书熟，名显皇都自是荣。",
+    "6两2钱" to "此命生来福不穷，读书必定显亲宗，紫衣金带为卿相，富贵荣华皆可同。",
+    "6两3钱" to "命主为官福禄长，得来富贵实非常，名题雁塔传金榜，定中高高第一名。",
+    "6两4钱" to "此格人间一福人，堆金积玉满堂春，从来富贵由天定，不须辛苦自然能。",
+    "6两5钱" to "细推此命福非轻，富贵荣华孰得均，定有刺史巡按格，安享高官受国恩。",
+    "6两6钱" to "此命生来福自宏，田园家业最高隆，平生衣禄丰盈足，一世荣华万事通。",
+    "6两7钱" to "此命生来福不轻，封妻荫子受皇恩，世代受贵守原典，腰身常带紫金鱼。",
+    "6两8钱" to "富贵由天莫苦求，万事乘除天作主，将相公侯天上有，何须用力强为吏。",
+    "6两9钱" to "君是人间衣禄星，一生富贵众人钦，纵然福禄由天定，安享荣华过一生。",
+    "7两" to "此命生成大不同，公侯卿相在其中，一生自有逍遥福，富贵荣华极品隆。",
+    "7两1钱" to "此命推来福不同，一生富贵众人钦，定为社稷栋梁臣，一身荣耀显门庭。"
+)
+
+private fun calcBoneWeight(result: ChartResult): Pair<String, String>? {
+    val yearGz = result.pillars.year.gan + result.pillars.year.zhi
+    val hourZhi = result.pillars.hour.zhi
+    val lunar = parseLunar(result.summary.lunarDatetime) ?: return null
+    val (mo, dy, _) = lunar
+    val y = YEAR_BONE_FEN[yearGz] ?: return null
+    val m = MONTH_BONE_FEN.getOrElse(mo) { return null }
+    val d = DAY_BONE_FEN.getOrElse(dy) { return null }
+    val h = HOUR_BONE_FEN[hourZhi] ?: return null
+    val total = y + m + d + h
+    val liang = total / 100
+    val qian = (total % 100) / 10
+    val fen = total % 10
+    val cnNum = listOf("零", "一", "二", "三", "四", "五", "六", "七", "八", "九")
+    val weight = buildString {
+        append(cnNum[liang]).append("两")
+        if (qian > 0) append(cnNum[qian]).append("钱")
+        if (fen > 0) append(cnNum[fen]).append("分")
+    }
+    val key = if (fen > 0) "${liang}两${qian}钱${fen}分" else "${liang}两${qian}钱"
+    val verdict = BONE_VERDICTS[key] ?: BONE_VERDICTS["${liang}两${qian}钱"].orEmpty()
+    return weight to verdict
+}
+
+@Composable
+private fun CoarseChartPanel(result: ChartResult) {
+    val configuration = LocalConfiguration.current
+    val screenW = configuration.screenWidthDp.dp
+    val labelW = 48.dp
+    val cellW = ((screenW - 20.dp - labelW) / 4).coerceIn(60.dp, 140.dp)
+    val pillars = listOf(result.pillars.year, result.pillars.month, result.pillars.day, result.pillars.hour)
+    val dayGan = result.pillars.day.gan
+    val isFemale = result.gender.contains("女")
+
+    // 藏干 cell: 每个地支按 DZ_CANGGAN 展开 → "干（十神）" 多行
+    val hiddenCells = pillars.map { p ->
+        val idx = DIZHI.indexOf(p.zhi)
+        if (idx < 0) "" else DZ_CANGGAN[idx].map { ch ->
+            val g = ch.toString()
+            "$g（${getShishen(g, dayGan)}）"
+        }.joinToString("\n")
+    }
+
+    // 神煞从 rawText 抽取
+    val shensha = listOf("年柱", "月柱", "日柱", "时柱").map { p ->
+        Regex("【${p}神煞】：([^\\n]+)").find(result.rawText)?.groupValues?.getOrNull(1)
+            ?.split("、")?.joinToString("\n").orEmpty()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0xFFD0A77A))
+    ) {
+        TableRow(
+            cells = listOf("四柱:", "年柱", "月柱", "日柱", "时柱"),
+            background = DarkGray, cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("十神:") + pillars.mapIndexed { i, p ->
+                if (i == 2) (if (isFemale) "元女" else "元男") else p.ganGod
+            },
+            background = LightGray, cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("天干:") + pillars.map { it.gan },
+            background = MidGray,
+            bigIndexes = (1..4).toSet(),
+            colors = listOf(DarkText) + pillars.map { stemColor(it.gan) },
+            cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("地支:") + pillars.map { it.zhi },
+            background = LightGray,
+            bigIndexes = (1..4).toSet(),
+            colors = listOf(DarkText) + pillars.map { stemColor(it.zhi) },
+            cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("藏干:") + hiddenCells,
+            background = MidGray, height = 78.dp,
+            cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("纳音:") + pillars.map { it.nayin },
+            background = LightGray, cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("空亡:") + pillars.map { calcXunKong(it.gz()) },
+            background = MidGray, cellWidth = cellW, labelWidth = labelW
+        )
+        TableRow(
+            cells = listOf("神煞:") + shensha,
+            background = LightGray, height = 96.dp,
+            cellWidth = cellW, labelWidth = labelW
+        )
+        val tgLiuyi = calcLiuyi(pillars.map { it.gan }, tianganOnly = true)
+        val dzLiuyi = calcLiuyi(pillars.map { it.zhi }, tianganOnly = false)
+        CoarseNoteRow("天干留意:", tgLiuyi, MidGray)
+        CoarseNoteRow("地支留意:", dzLiuyi, LightGray)
+        val bone = calcBoneWeight(result)
+        if (bone != null) {
+            CoarseNoteRow("称骨重量:", bone.first, MidGray)
+            CoarseNoteRow("称骨评语:", bone.second, LightGray)
+        }
+    }
+    Spacer(modifier = Modifier.height(10.dp))
+    PromoDivider()
+    Spacer(modifier = Modifier.height(10.dp))
+}
+
+@Composable
 private fun RawResultHeader(result: ChartResult) {
     val summary = result.summary
     Column(
@@ -740,11 +980,20 @@ private fun InteractiveTreePanel(
     var loadingMonths by rememberSaveable(result.birthTime) { mutableStateOf(false) }
     var loadingDays by rememberSaveable(result.birthTime) { mutableStateOf(false) }
     var errorMessage by rememberSaveable(result.birthTime) { mutableStateOf<String?>(null) }
+    // 缓存：避免重复点流年/流月刷接口造成 UI 闪动
+    val monthCache = remember(result.birthTime) { mutableStateMapOf<Int, List<BaziTreeItem>>() }
+    val dayCache = remember(result.birthTime) { mutableStateMapOf<Pair<Int, Int>, List<BaziTreeItem>>() }
 
     LaunchedEffect(result.birthTime, selectedYear) {
         val year = selectedYear ?: return@LaunchedEffect
-        loadingMonths = true
         errorMessage = null
+        val cached = monthCache[year]
+        if (cached != null) {
+            monthItems = cached
+            selectedMonth = cached.firstOrNull { it.month == currentMonth }?.month ?: cached.firstOrNull()?.month
+            return@LaunchedEffect
+        }
+        loadingMonths = true
         monthItems = emptyList()
         dayItems = emptyList()
         selectedMonth = null
@@ -757,6 +1006,7 @@ private fun InteractiveTreePanel(
                 queryYear = year
             )
         }.onSuccess { items ->
+            monthCache[year] = items
             monthItems = items
             selectedMonth = items.firstOrNull { it.month == currentMonth }?.month ?: items.firstOrNull()?.month
         }.onFailure {
@@ -768,8 +1018,15 @@ private fun InteractiveTreePanel(
     LaunchedEffect(result.birthTime, selectedYear, selectedMonth) {
         val year = selectedYear ?: return@LaunchedEffect
         val month = selectedMonth ?: return@LaunchedEffect
-        loadingDays = true
         errorMessage = null
+        val key = year to month
+        val cached = dayCache[key]
+        if (cached != null) {
+            dayItems = cached
+            selectedDay = cached.firstOrNull()?.idx
+            return@LaunchedEffect
+        }
+        loadingDays = true
         dayItems = emptyList()
         selectedDay = null
         runCatching {
@@ -781,6 +1038,7 @@ private fun InteractiveTreePanel(
                 queryMonth = month
             )
         }.onSuccess { items ->
+            dayCache[key] = items
             dayItems = items
             selectedDay = items.firstOrNull()?.idx
         }.onFailure {
@@ -920,18 +1178,15 @@ private fun LinkedDetailGrid(
         result.pillars.hour
     )
     val headers = listOf("日期", "流日", "流月", "流年", "大运", "年柱", "月柱", "日柱", "时柱")
-    val birthParts = result.birthTime.split(Regex("[\\- :]"))
-    val birthYear = birthParts.getOrNull(0).orEmpty()
-    val birthMonth = (birthParts.getOrNull(1)?.toIntOrNull()?.toString() ?: "").let { if (it.isNotBlank()) "${it}月" else "" }
-    val birthDay = (birthParts.getOrNull(2)?.toIntOrNull()?.toString() ?: "").let { if (it.isNotBlank()) "${it}日" else "" }
-    val birthHour = (birthParts.getOrNull(3)?.toIntOrNull()?.toString() ?: "").let { if (it.isNotBlank()) "${it}时" else "" }
     val dateRow = listOf(
         "岁年",
         dayItem.treeLabel(),
         monthItem.treeLabel(),
         yearItem.treeLabel(),
         luckItem?.let { "${it.age}岁\n${it.startYear}" }.orEmpty(),
-    ) + listOf(birthYear, birthMonth, birthDay, birthHour)
+    ) + List(4) { "*" }
+    val dayGan = result.pillars.day.gan
+    val isFemale = result.gender.contains("女")
     val ganRow = listOf(
         "天干",
         dayItem.gan(),
@@ -946,20 +1201,20 @@ private fun LinkedDetailGrid(
         yearItem.zhi(),
         luckItem.zhi(),
     ) + pillars.map { it.zhi }
-    val godRow = listOf(
-        "十神",
-        dayItem.godText(),
-        monthItem.godText(),
-        yearItem.godText(),
-        luckItem?.god.orEmpty(),
-    ) + pillars.map { it.ganGod }
-    val nayinRow = listOf(
-        "纳音",
-        dayItem?.nayin.orEmpty(),
-        monthItem?.nayin.orEmpty(),
-        yearItem?.nayin.orEmpty(),
-        luckItem?.state.orEmpty(),
-    ) + pillars.map { it.nayin }
+    val ganCells = listOf(StackedCell("天干", isLabel = true)) +
+        ganRow.drop(1).mapIndexed { idx, g ->
+            val isDayPillar = idx == 6 // 第 6 个（label 之外）= 日柱
+            val sub = when {
+                g.isEmpty() -> ""
+                isDayPillar -> if (isFemale) "元女" else "元男"
+                else -> shishenShort(g, dayGan)
+            }
+            StackedCell(main = g, sub = sub, mainColor = stemColor(g))
+        }
+    val zhiCells = listOf(StackedCell("地支", isLabel = true)) +
+        zhiRow.drop(1).map { z ->
+            StackedCell(main = z, sub = dzShishenShort(z, dayGan), mainColor = stemColor(z))
+        }
     val kongWangRow = listOf(
         "空亡",
         calcXunKong(dayItem?.gz),
@@ -990,51 +1245,21 @@ private fun LinkedDetailGrid(
             cellWidth = topCellWidth,
             labelWidth = topLabelWidth
         )
-        TableRow(
-            cells = ganRow,
+        StackedTableRow(
+            cells = ganCells,
             background = LightGray,
-            bigIndexes = (1..8).toSet(),
-            colors = listOf(DarkText) + ganRow.drop(1).map { stemColor(it) },
             cellWidth = topCellWidth,
             labelWidth = topLabelWidth
         )
-        TableRow(
-            cells = zhiRow,
+        StackedTableRow(
+            cells = zhiCells,
             background = MidGray,
-            bigIndexes = (1..8).toSet(),
-            colors = listOf(DarkText) + zhiRow.drop(1).map { stemColor(it) },
-            cellWidth = topCellWidth,
-            labelWidth = topLabelWidth
-        )
-        TableRow(
-            cells = nayinRow,
-            background = LightGray,
             cellWidth = topCellWidth,
             labelWidth = topLabelWidth
         )
         TableRow(
             cells = kongWangRow,
-            background = MidGray,
-            cellWidth = topCellWidth,
-            labelWidth = topLabelWidth
-        )
-        TableRow(
-            cells = godRow,
             background = LightGray,
-            cellWidth = topCellWidth,
-            labelWidth = topLabelWidth
-        )
-        TableRow(
-            cells = listOf("藏干", dayItem.hiddenText(), monthItem.hiddenText(), yearItem.hiddenText(), "") + pillars.map { it.hidden.joinToString("\n") },
-            background = MidGray,
-            height = 78.dp,
-            cellWidth = topCellWidth,
-            labelWidth = topLabelWidth
-        )
-        TableRow(
-            cells = listOf("神煞", dayItem.starText(), monthItem.starText(), yearItem.starText(), luckItem?.stars.orEmpty()) + List(4) { "" },
-            background = LightGray,
-            height = 96.dp,
             cellWidth = topCellWidth,
             labelWidth = topLabelWidth
         )
@@ -1481,6 +1706,67 @@ private fun calcXunKong(gz: String?): String {
         listOf("甲寅", "乙卯", "丙辰", "丁巳", "戊午", "己未", "庚申", "辛酉", "壬戌", "癸亥") to "子丑"
     )
     return groups.firstOrNull { (items, _) -> value in items }?.second.orEmpty()
+}
+
+private val TIANGAN = listOf("甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸")
+private val DIZHI = listOf("子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥")
+private val SS_SHORTER = mapOf(
+    "比肩" to "比", "劫财" to "劫", "正印" to "印", "偏印" to "枭",
+    "正官" to "官", "七杀" to "杀", "正财" to "财", "偏财" to "才",
+    "伤官" to "伤", "食神" to "食"
+)
+// 地支藏干（顺序：子丑寅卯辰巳午未申酉戌亥）
+private val DZ_CANGGAN = listOf(
+    "癸", "己癸辛", "甲丙戊", "乙", "戊乙癸", "丙戊庚",
+    "丁己", "己丁乙", "庚壬戊", "辛", "戊辛丁", "壬甲"
+)
+
+/** 以日干为基准计算某天干的十神（返回全名）。 */
+private fun getShishen(targetGan: String, dayGan: String): String {
+    val ri = TIANGAN.indexOf(dayGan)
+    val tg = TIANGAN.indexOf(targetGan)
+    if (ri < 0 || tg < 0) return ""
+    val cha = ri - tg
+    return if (cha >= 0) when (cha) {
+        0 -> "比肩"
+        1 -> if (ri % 2 == 1) "劫财" else "正印"
+        2 -> "偏印"
+        3 -> if (ri % 2 == 1) "正印" else "正官"
+        4 -> "七杀"
+        5 -> if (ri % 2 == 1) "正官" else "正财"
+        6 -> "偏财"
+        7 -> if (ri % 2 == 1) "正财" else "伤官"
+        8 -> "食神"
+        9 -> "伤官"
+        else -> ""
+    } else when (-cha) {
+        1 -> if (ri % 2 == 0) "劫财" else "伤官"
+        2 -> "食神"
+        3 -> if (ri % 2 == 0) "伤官" else "正财"
+        4 -> "偏财"
+        5 -> if (ri % 2 == 0) "正财" else "正官"
+        6 -> "七杀"
+        7 -> if (ri % 2 == 0) "正官" else "正印"
+        8 -> "偏印"
+        9 -> "正印"
+        else -> ""
+    }
+}
+
+/** 简写十神（1 字）。 */
+private fun shishenShort(targetGan: String, dayGan: String): String {
+    if (targetGan.isEmpty() || dayGan.isEmpty()) return ""
+    val full = getShishen(targetGan, dayGan)
+    // 日柱天干特殊处理：日干本身在 paipan 里显示「元男/元女」
+    return SS_SHORTER[full] ?: ""
+}
+
+/** 地支藏干的十神简写串，例如 申(庚壬戊) -> "财官伤"。 */
+private fun dzShishenShort(zhi: String, dayGan: String): String {
+    val idx = DIZHI.indexOf(zhi)
+    if (idx < 0 || dayGan.isEmpty()) return ""
+    val cangGan = DZ_CANGGAN[idx]
+    return cangGan.map { ch -> shishenShort(ch.toString(), dayGan) }.joinToString("")
 }
 
 private fun stemColor(text: String): Color {
@@ -2076,6 +2362,71 @@ private fun TableRow(
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
+            }
+        }
+    }
+}
+
+/** 主字+小字旁注 cell 数据。 */
+private data class StackedCell(
+    val main: String,
+    val sub: String = "",
+    val mainColor: Color? = null,
+    val isLabel: Boolean = false
+)
+
+@Composable
+private fun StackedTableRow(
+    cells: List<StackedCell>,
+    background: Color,
+    height: Dp = 44.dp,
+    labelWidth: Dp = 58.dp,
+    cellWidth: Dp = 80.dp,
+    textColor: Color = DarkText
+) {
+    Row(modifier = Modifier.height(height)) {
+        cells.forEachIndexed { index, cell ->
+            val width = if (index == 0) labelWidth else cellWidth
+            Box(
+                modifier = Modifier
+                    .width(width)
+                    .fillMaxSize()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (cell.isLabel || index == 0) {
+                    Text(
+                        text = cell.main,
+                        color = cell.mainColor ?: textColor,
+                        fontSize = 12.sp,
+                        lineHeight = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = cell.main,
+                            color = cell.mainColor ?: textColor,
+                            fontSize = 22.sp,
+                            lineHeight = 24.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                        if (cell.sub.isNotEmpty()) {
+                            Spacer(modifier = Modifier.width(1.dp))
+                            Text(
+                                text = cell.sub.toCharArray().joinToString("\n"),
+                                color = textColor,
+                                fontSize = 8.sp,
+                                lineHeight = 9.sp,
+                                textAlign = TextAlign.Start
+                            )
+                        }
+                    }
+                }
             }
         }
     }
