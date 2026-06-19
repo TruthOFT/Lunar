@@ -1,14 +1,18 @@
 package com.lunar.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -19,20 +23,24 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lunar.data.AuthSession
 import com.lunar.data.UserInfo
+import com.lunar.data.activateLicence
 import com.lunar.data.fetchCurrentUser
 import com.lunar.data.isLoginInvalid
 import com.lunar.data.userMessage
 import com.lunar.ui.theme.DarkText
 import com.lunar.ui.theme.RedTitle
+import kotlinx.coroutines.launch
 
 @Composable
 fun MineScreen(
@@ -42,10 +50,15 @@ fun MineScreen(
     onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var currentUser by remember { mutableStateOf<UserInfo?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var reloadKey by remember { mutableIntStateOf(0) }
+    var showActivateDialog by remember { mutableStateOf(false) }
+    var activateCode by remember { mutableStateOf("") }
+    var isActivating by remember { mutableStateOf(false) }
 
     LaunchedEffect(authSession?.token, reloadKey) {
         val session = authSession
@@ -67,6 +80,43 @@ fun MineScreen(
                 }
             }
         isLoading = false
+    }
+
+    if (showActivateDialog) {
+        ActivateVipDialog(
+            code = activateCode,
+            onCodeChange = { activateCode = it },
+            isActivating = isActivating,
+            onDismiss = {
+                if (!isActivating) {
+                    showActivateDialog = false
+                }
+            },
+            onConfirm = {
+                val session = authSession
+                if (session == null) {
+                    showActivateDialog = false
+                    onRequireLogin()
+                } else if (activateCode.isBlank()) {
+                    Toast.makeText(context, "请输入激活码", Toast.LENGTH_SHORT).show()
+                } else {
+                    scope.launch {
+                        isActivating = true
+                        runCatching { activateLicence(session.token, activateCode) }
+                            .onSuccess {
+                                Toast.makeText(context, "激活成功", Toast.LENGTH_SHORT).show()
+                                activateCode = ""
+                                showActivateDialog = false
+                                reloadKey++
+                            }
+                            .onFailure {
+                                Toast.makeText(context, it.userMessage(), Toast.LENGTH_SHORT).show()
+                            }
+                        isActivating = false
+                    }
+                }
+            }
+        )
     }
 
     Column(
@@ -92,7 +142,8 @@ fun MineScreen(
                 if (user != null) {
                     UserBlock(
                         user = user,
-                        onLogout = onLogout
+                        onLogout = onLogout,
+                        onActivateVip = { showActivateDialog = true }
                     )
                 }
             }
@@ -127,12 +178,36 @@ private fun ErrorBlock(message: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun UserBlock(user: UserInfo, onLogout: () -> Unit) {
+private fun UserBlock(user: UserInfo, onLogout: () -> Unit, onActivateVip: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         InfoLine(label = "用户 ID", value = user.id.toString())
         InfoLine(label = "账号", value = user.account)
         InfoLine(label = "昵称", value = user.nickname)
-        InfoLine(label = "会员状态", value = if (user.isVip) "VIP 用户" else "普通用户")
+        Text("会员状态", color = Color(0xFF707070), fontSize = 13.sp)
+        Spacer(modifier = Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (user.isVip) "VIP 用户" else "普通用户",
+                color = DarkText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            if (!user.isVip) {
+                Spacer(modifier = Modifier.width(10.dp))
+                TextButton(
+                    onClick = onActivateVip,
+                    colors = ButtonDefaults.textButtonColors(
+                        containerColor = RedTitle,
+                        contentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp)
+                ) {
+                    Text("激活 VIP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(14.dp))
         if (user.isVip) {
             InfoLine(label = "VIP 到期时间", value = user.vipExpireTime)
         }

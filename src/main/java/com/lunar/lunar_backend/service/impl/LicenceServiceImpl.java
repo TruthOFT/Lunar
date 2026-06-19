@@ -31,8 +31,7 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     private static final int STATUS_USED = 2;
     private static final int DEFAULT_COUNT = 1;
     private static final int MAX_COUNT = 100;
-    private static final int DEFAULT_DURATION_DAYS = 30;
-    private static final int MAX_DURATION_DAYS = 3650;
+    private static final int VIP_DURATION_DAYS = 30;
     private static final int CODE_GROUPS = 4;
     private static final int CODE_GROUP_LENGTH = 4;
     private static final int MAX_GENERATE_RETRY = 10;
@@ -45,20 +44,15 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     @Override
     public List<LicenceResponse> generate(LicenceGenerateRequest request) {
         int count = validCount(request == null ? null : request.count());
-        int durationDays = validDurationDays(request == null ? null : request.durationDays());
         String licenceType = defaultText(request == null ? null : request.licenceType(), DEFAULT_LICENCE_TYPE);
         String remark = defaultText(request == null ? null : request.remark(), "");
-
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime expireTime = now.plusDays(durationDays);
 
         List<LicenceResponse> result = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             Licence licence = new Licence();
             licence.setLicenceCode(nextUniqueCode());
             licence.setLicenceType(licenceType);
-            licence.setDurationDays(durationDays);
-            licence.setExpireTime(expireTime);
+            // 未激活的码永不过期，expireTime 在激活时才写入
             licence.setStatus(STATUS_UNUSED);
             licence.setRemark(remark);
             save(licence);
@@ -70,23 +64,21 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     @Override
     public LicenceActivateResponse activate(Long userId, LicenceActivateRequest request) {
         if (userId == null || request == null || !StringUtils.hasText(request.licenceCode())) {
-            throw new ApiException(4000, "Licence code cannot be empty");
+            throw new ApiException(4000, "激活码不能为空");
         }
         String code = request.licenceCode().trim().toUpperCase();
         LocalDateTime now = LocalDateTime.now();
         boolean activated = update(new LambdaUpdateWrapper<Licence>()
                 .set(Licence::getUserId, userId)
                 .set(Licence::getStatus, STATUS_USED)
-                .set(Licence::getUsedTime, now)
+                // 激活时才确定会员到期时间：当前时间 + 30 天
+                .set(Licence::getExpireTime, now.plusDays(VIP_DURATION_DAYS))
                 .eq(Licence::getLicenceCode, code)
                 .eq(Licence::getStatus, STATUS_UNUSED)
                 .isNull(Licence::getUserId)
-                .eq(Licence::getIsDelete, 0)
-                .and(wrapper -> wrapper.isNull(Licence::getExpireTime)
-                        .or()
-                        .gt(Licence::getExpireTime, now)));
+                .eq(Licence::getIsDelete, 0));
         if (!activated) {
-            throw new ApiException(4000, "Licence code invalid or already used");
+            throw new ApiException(4000, "激活码无效或已被使用");
         }
         LicenceVipStatus vipStatus = currentVipStatus(userId);
         return new LicenceActivateResponse(vipStatus.isVip(), vipStatus.vipExpireTime(), vipStatus.licenceType());
@@ -104,11 +96,8 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
         LocalDateTime latestExpireTime = null;
         String licenceType = "";
         for (Licence licence : licences) {
-            if (licence.getUsedTime() == null || licence.getDurationDays() == null) {
-                continue;
-            }
-            LocalDateTime memberExpireTime = licence.getUsedTime().plusDays(licence.getDurationDays());
-            if (!memberExpireTime.isAfter(now)) {
+            LocalDateTime memberExpireTime = licence.getExpireTime();
+            if (memberExpireTime == null || !memberExpireTime.isAfter(now)) {
                 continue;
             }
             if (latestExpireTime == null || memberExpireTime.isAfter(latestExpireTime)) {
@@ -137,22 +126,15 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     @Override
     public void updateLicence(Long id, LicenceUpdateRequest request) {
         if (id == null) {
-            throw new ApiException(4000, "ID cannot be null");
+            throw new ApiException(4000, "ID 不能为空");
         }
         if (getById(id) == null) {
-            throw new ApiException(4040, "Licence not found");
+            throw new ApiException(4040, "激活码不存在");
         }
         LambdaUpdateWrapper<Licence> wrapper = new LambdaUpdateWrapper<Licence>()
                 .eq(Licence::getId, id);
         if (StringUtils.hasText(request.licenceType())) {
             wrapper.set(Licence::getLicenceType, request.licenceType().trim());
-        }
-        if (request.durationDays() != null) {
-            int days = request.durationDays();
-            if (days < 1 || days > MAX_DURATION_DAYS) {
-                throw new ApiException(4000, "Duration days must be between 1 and 3650");
-            }
-            wrapper.set(Licence::getDurationDays, days);
         }
         if (request.remark() != null) {
             wrapper.set(Licence::getRemark, request.remark().trim());
@@ -163,10 +145,10 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     @Override
     public void deleteLicence(Long id) {
         if (id == null) {
-            throw new ApiException(4000, "ID cannot be null");
+            throw new ApiException(4000, "ID 不能为空");
         }
         if (!removeById(id)) {
-            throw new ApiException(4040, "Licence not found");
+            throw new ApiException(4040, "激活码不存在");
         }
     }
 
@@ -177,7 +159,7 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
                 return code;
             }
         }
-        throw new ApiException(5000, "Licence code generate failed, please retry");
+        throw new ApiException(5000, "激活码生成失败，请重试");
     }
 
     private String nextCode() {
@@ -199,15 +181,7 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     private int validCount(Integer count) {
         int value = count == null ? DEFAULT_COUNT : count;
         if (value < 1 || value > MAX_COUNT) {
-            throw new ApiException(4000, "Generate count must be between 1 and 100");
-        }
-        return value;
-    }
-
-    private int validDurationDays(Integer durationDays) {
-        int value = durationDays == null ? DEFAULT_DURATION_DAYS : durationDays;
-        if (value < 1 || value > MAX_DURATION_DAYS) {
-            throw new ApiException(4000, "Duration days must be between 1 and 3650");
+            throw new ApiException(4000, "生成数量需为 1 到 100");
         }
         return value;
     }
@@ -217,7 +191,6 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
                 licence.getId(),
                 licence.getLicenceCode(),
                 licence.getLicenceType(),
-                licence.getDurationDays(),
                 licence.getExpireTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getExpireTime()),
                 licence.getStatus(),
                 licence.getRemark(),
@@ -230,12 +203,10 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
                 licence.getId(),
                 licence.getLicenceCode(),
                 licence.getLicenceType(),
-                licence.getDurationDays(),
                 licence.getExpireTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getExpireTime()),
                 licence.getStatus(),
                 licence.getRemark(),
                 licence.getUserId(),
-                licence.getUsedTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getUsedTime()),
                 licence.getCreateTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getCreateTime())
         );
     }

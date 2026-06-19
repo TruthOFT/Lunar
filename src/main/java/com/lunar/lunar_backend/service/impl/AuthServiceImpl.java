@@ -1,11 +1,15 @@
 package com.lunar.lunar_backend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.lunar.lunar_backend.dto.AuthResponse;
 import com.lunar.lunar_backend.dto.LicenceVipStatus;
 import com.lunar.lunar_backend.dto.LoginRequest;
 import com.lunar.lunar_backend.dto.RegisterRequest;
+import com.lunar.lunar_backend.dto.UserAdminResponse;
 import com.lunar.lunar_backend.dto.UserResponse;
 import com.lunar.lunar_backend.entity.LunarUser;
 import com.lunar.lunar_backend.common.ErrorCode;
@@ -16,6 +20,7 @@ import com.lunar.lunar_backend.service.LicenceService;
 import com.lunar.lunar_backend.util.JwtUtil;
 import com.lunar.lunar_backend.util.Md5Util;
 import jakarta.annotation.Resource;
+import java.time.format.DateTimeFormatter;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -23,6 +28,7 @@ import org.springframework.util.StringUtils;
 public class AuthServiceImpl extends ServiceImpl<LunarUserMapper, LunarUser> implements AuthService {
 
     private static final String PASSWORD_SALT = "lunar_password_salt_2026";
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Resource
     private LicenceService licenceService;
@@ -74,6 +80,50 @@ public class AuthServiceImpl extends ServiceImpl<LunarUserMapper, LunarUser> imp
             throw new ApiException(ErrorCode.LOGIN_INVALID);
         }
         return user;
+    }
+
+    @Override
+    public IPage<UserAdminResponse> listUsers(Integer page, Integer pageSize, String keyword) {
+        int p = (page == null || page < 1) ? 1 : page;
+        int ps = (pageSize == null || pageSize < 1) ? 10 : Math.min(pageSize, 100);
+        LambdaQueryWrapper<LunarUser> wrapper = new LambdaQueryWrapper<LunarUser>()
+                .orderByDesc(LunarUser::getCreateTime);
+        if (StringUtils.hasText(keyword)) {
+            wrapper.and(w -> w.like(LunarUser::getAccount, keyword).or().like(LunarUser::getNickname, keyword));
+        }
+        return page(new Page<>(p, ps), wrapper).convert(this::toAdminUserResponse);
+    }
+
+    @Override
+    public void updateUserRole(Long id, Integer role) {
+        if (id == null) {
+            throw new ApiException(4000, "ID 不能为空");
+        }
+        if (role == null || (role != 0 && role != 1)) {
+            throw new ApiException(4000, "角色只能为 0 或 1");
+        }
+        if (getById(id) == null) {
+            throw new ApiException(4040, "用户不存在");
+        }
+        update(new LambdaUpdateWrapper<LunarUser>()
+                .eq(LunarUser::getId, id)
+                .set(LunarUser::getRole, role));
+    }
+
+    @Override
+    public void deleteUser(Long id) {
+        if (id == null) {
+            throw new ApiException(4000, "ID 不能为空");
+        }
+        if (!removeById(id)) {
+            throw new ApiException(4040, "用户不存在");
+        }
+    }
+
+    private UserAdminResponse toAdminUserResponse(LunarUser user) {
+        String createTime = user.getCreateTime() != null
+                ? user.getCreateTime().format(DATE_TIME_FORMATTER) : "";
+        return new UserAdminResponse(user.getId(), user.getAccount(), user.getNickname(), user.getRole(), createTime);
     }
 
     private LunarUser getByAccount(String account) {

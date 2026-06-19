@@ -6,8 +6,17 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.sse.EventSource
+import okhttp3.sse.EventSourceListener
+import okhttp3.sse.EventSources
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -100,6 +109,9 @@ interface BackendApi {
 
     @POST("api/licences/activate")
     suspend fun activateLicence(@Body request: LicenceActivateRequest): ApiResponse<LicenceActivateResponse>
+
+    @GET("api/app/version/latest")
+    suspend fun getLatestVersion(): ApiResponse<AppVersionInfo>
 }
 
 interface BaziRetrofitApi {
@@ -147,9 +159,42 @@ suspend fun analyzeChartRecord(token: String, request: AiAnalyzeRequest): String
     return backendApi.analyze(request).requireData()
 }
 
+fun analyzeChartRecordStream(token: String, request: AiAnalyzeRequest): Flow<String> = callbackFlow {
+    val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .build()
+    val body = appJson.encodeToString(request)
+        .toRequestBody("application/json; charset=utf-8".toMediaType())
+    val httpRequest = Request.Builder()
+        .url(BACKEND_BASE_URL + "api/ai/analyze/stream")
+        .post(body)
+        .addHeader("Authorization", "Bearer $token")
+        .build()
+    val eventSource = EventSources.createFactory(client).newEventSource(
+        httpRequest,
+        object : EventSourceListener() {
+            override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
+                trySend(data)
+            }
+            override fun onClosed(es: EventSource) {
+                close()
+            }
+            override fun onFailure(es: EventSource, t: Throwable?, response: Response?) {
+                close(t ?: ApiBusinessException(response?.code ?: 0, "AI分析请求失败"))
+            }
+        }
+    )
+    awaitClose { eventSource.cancel() }
+}
+
 suspend fun activateLicence(token: String, licenceCode: String): LicenceActivateResponse {
     AuthTokenHolder.token = token
     return backendApi.activateLicence(LicenceActivateRequest(licenceCode = licenceCode)).requireData()
+}
+
+suspend fun fetchLatestVersion(): AppVersionInfo? {
+    return runCatching { backendApi.getLatestVersion().data }.getOrNull()
 }
 
 suspend fun fetchBaziCalculate(

@@ -29,6 +29,9 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
         String token = extractToken(request);
         if (!StringUtils.hasText(token)) {
             throw new ApiException(ErrorCode.NOT_LOGIN);
@@ -63,10 +66,10 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
         String role = authCheck.role().trim();
         if (ADMIN_ROLE_NAME.equals(role) && !Integer.valueOf(ADMIN_ROLE_VALUE).equals(user.getRole())) {
-            throw new ApiException(4030, "No permission");
+            throw new ApiException(4030, "无权限访问");
         }
         if (!ADMIN_ROLE_NAME.equals(role)) {
-            throw new ApiException(4030, "No permission");
+            throw new ApiException(4030, "无权限访问");
         }
     }
 }

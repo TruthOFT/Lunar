@@ -76,3 +76,12 @@ data class AuthSession(
     val account: String,
     val nickname: String
 )
+
+@Serializable
+data class AppVersionInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val downloadUrl: String,
+    val changelog: String = "",
+    val forceUpdate: Boolean = false
+)

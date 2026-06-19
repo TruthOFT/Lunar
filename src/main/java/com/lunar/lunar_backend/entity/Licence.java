@@ -20,13 +20,9 @@ public class Licence {
 
     private String licenceType;
 
-    private Integer durationDays;
-
     private LocalDateTime expireTime;
 
     private Integer status;
-
-    private LocalDateTime usedTime;
 
     private String remark;
 

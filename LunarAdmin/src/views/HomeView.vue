@@ -51,7 +51,7 @@ onMounted(loadData)
 const showGenModal = ref(false)
 const genLoading = ref(false)
 const genFormRef = ref()
-const genForm = reactive({ count: 1, licenceType: 'vip', durationDays: 30, remark: '' })
+const genForm = reactive({ count: 1, licenceType: 'vip', remark: '' })
 
 async function handleGenerate() {
   try {
@@ -64,12 +64,11 @@ async function handleGenerate() {
     const res = await generateLicences({
       count: genForm.count,
       licenceType: genForm.licenceType || 'vip',
-      durationDays: genForm.durationDays,
       remark: genForm.remark || undefined,
     })
     message.success(`成功生成 ${res.length} 张卡密`)
     showGenModal.value = false
-    Object.assign(genForm, { count: 1, licenceType: 'vip', durationDays: 30, remark: '' })
+    Object.assign(genForm, { count: 1, licenceType: 'vip', remark: '' })
     pagination.current = 1
     loadData()
   } catch (e: unknown) {
@@ -83,12 +82,11 @@ async function handleGenerate() {
 const showEditModal = ref(false)
 const editLoading = ref(false)
 const editFormRef = ref()
-const editForm = reactive({ id: 0, licenceType: '', durationDays: 30, remark: '' })
+const editForm = reactive({ id: 0, licenceType: '', remark: '' })
 
 function openEdit(record: LicenceAdminItem) {
   editForm.id = record.id
   editForm.licenceType = record.licenceType
-  editForm.durationDays = record.durationDays
   editForm.remark = record.remark
   showEditModal.value = true
 }
@@ -103,7 +101,6 @@ async function handleEdit() {
   try {
     await updateLicence(editForm.id, {
       licenceType: editForm.licenceType,
-      durationDays: editForm.durationDays,
       remark: editForm.remark,
     })
     message.success('修改成功')
@@ -141,11 +138,9 @@ const columns = [
   { title: 'ID', dataIndex: 'id', width: 70, fixed: 'left' as const },
   { title: '卡密码', dataIndex: 'licenceCode', key: 'licenceCode', width: 230 },
   { title: '类型', dataIndex: 'licenceType', key: 'licenceType', width: 80 },
-  { title: '天数', dataIndex: 'durationDays', key: 'durationDays', width: 75 },
-  { title: '过期时间', dataIndex: 'expireTime', key: 'expireTime', width: 155 },
+  { title: '会员到期时间', dataIndex: 'expireTime', key: 'expireTime', width: 155 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 95 },
   { title: '激活用户', dataIndex: 'userId', key: 'userId', width: 90 },
-  { title: '激活时间', dataIndex: 'usedTime', key: 'usedTime', width: 155 },
   { title: '备注', dataIndex: 'remark', key: 'remark', ellipsis: true },
   { title: '创建时间', dataIndex: 'createTime', key: 'createTime', width: 155 },
   { title: '操作', key: 'actions', width: 100, fixed: 'right' as const },
@@ -163,13 +158,30 @@ const columns = [
         <span class="sider-title">LunarAdmin</span>
       </div>
       <a-menu mode="inline" class="sider-menu" :selected-keys="['licence']">
-        <a-menu-item key="licence">
+        <a-menu-item key="licence" @click="router.push('/')">
           <template #icon>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
             </svg>
           </template>
           Licence 管理
+        </a-menu-item>
+        <a-menu-item key="users" @click="router.push('/users')">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+            </svg>
+          </template>
+          用户管理
+        </a-menu-item>
+        <a-menu-item key="appversion" @click="router.push('/app-version')">
+          <template #icon>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+            </svg>
+          </template>
+          版本管理
         </a-menu-item>
       </a-menu>
     </a-layout-sider>
@@ -265,11 +277,6 @@ const columns = [
               <a-tag color="purple">{{ record.licenceType }}</a-tag>
             </template>
 
-            <!-- Duration -->
-            <template v-else-if="column.key === 'durationDays'">
-              {{ record.durationDays }}天
-            </template>
-
             <!-- Status -->
             <template v-else-if="column.key === 'status'">
               <a-tag :color="record.status === 1 ? 'success' : 'default'">
@@ -282,9 +289,9 @@ const columns = [
               <span style="color: #64748b">{{ record.userId ?? '—' }}</span>
             </template>
 
-            <!-- Used time / expire time -->
-            <template v-else-if="column.key === 'usedTime' || column.key === 'expireTime'">
-              <span style="color: #64748b; font-size: 12px">{{ record[column.key as keyof typeof record] || '—' }}</span>
+            <!-- Expire time -->
+            <template v-else-if="column.key === 'expireTime'">
+              <span style="color: #64748b; font-size: 12px">{{ record.expireTime || '永久有效' }}</span>
             </template>
 
             <!-- Actions -->
@@ -344,22 +351,9 @@ const columns = [
           </a-form-item>
         </a-col>
       </a-row>
-      <a-row :gutter="16">
-        <a-col :span="12">
-          <a-form-item
-            label="有效天数"
-            name="durationDays"
-            :rules="[{ required: true, type: 'number', min: 1, max: 3650, message: '1-3650' }]"
-          >
-            <a-input-number v-model:value="genForm.durationDays" :min="1" :max="3650" style="width: 100%" />
-          </a-form-item>
-        </a-col>
-        <a-col :span="12">
-          <a-form-item label="备注" name="remark">
-            <a-input v-model:value="genForm.remark" placeholder="可选" />
-          </a-form-item>
-        </a-col>
-      </a-row>
+      <a-form-item label="备注" name="remark">
+        <a-input v-model:value="genForm.remark" placeholder="可选" />
+      </a-form-item>
     </a-form>
   </a-modal>
 
@@ -384,13 +378,6 @@ const columns = [
         :rules="[{ required: true, message: '请输入类型' }]"
       >
         <a-input v-model:value="editForm.licenceType" />
-      </a-form-item>
-      <a-form-item
-        label="有效天数"
-        name="durationDays"
-        :rules="[{ required: true, type: 'number', min: 1, max: 3650, message: '1-3650' }]"
-      >
-        <a-input-number v-model:value="editForm.durationDays" :min="1" :max="3650" style="width: 100%" />
       </a-form-item>
       <a-form-item label="备注" name="remark">
         <a-input v-model:value="editForm.remark" />
