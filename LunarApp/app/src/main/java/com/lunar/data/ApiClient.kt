@@ -21,14 +21,17 @@ import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
+import retrofit2.http.Query
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
-private const val BACKEND_BASE_URL = "http://101.34.238.130:7000/"
+private const val BACKEND_BASE_URL = "http://192.168.31.70:7000/"
 private const val BAZI_BASE_URL = "http://www.lanxingai.space/"
 
 object AuthTokenHolder {
@@ -112,6 +115,18 @@ interface BackendApi {
 
     @GET("api/app/version/latest")
     suspend fun getLatestVersion(): ApiResponse<AppVersionInfo>
+
+    @POST("api/notes")
+    suspend fun saveNote(@Body request: NoteCreateRequest): ApiResponse<NoteItem>
+
+    @GET("api/notes")
+    suspend fun listNotes(@Query("birthTime") birthTime: String): ApiResponse<List<NoteItem>>
+
+    @DELETE("api/notes/{id}")
+    suspend fun deleteNote(@Path("id") id: Long): ApiResponse<Unit?>
+
+    @DELETE("api/notes/clear")
+    suspend fun clearNotes(@Query("birthTime") birthTime: String): ApiResponse<Unit?>
 }
 
 interface BaziRetrofitApi {
@@ -195,6 +210,21 @@ suspend fun activateLicence(token: String, licenceCode: String): LicenceActivate
 
 suspend fun fetchLatestVersion(): AppVersionInfo? {
     return runCatching { backendApi.getLatestVersion().data }.getOrNull()
+}
+
+suspend fun fetchNotes(token: String, birthTime: String): List<NoteItem> {
+    AuthTokenHolder.token = token
+    return backendApi.listNotes(birthTime).requireData()
+}
+
+suspend fun saveNote(token: String, request: NoteCreateRequest): NoteItem {
+    AuthTokenHolder.token = token
+    return backendApi.saveNote(request).requireData()
+}
+
+suspend fun clearNotes(token: String, birthTime: String) {
+    AuthTokenHolder.token = token
+    backendApi.clearNotes(birthTime)
 }
 
 suspend fun fetchBaziCalculate(

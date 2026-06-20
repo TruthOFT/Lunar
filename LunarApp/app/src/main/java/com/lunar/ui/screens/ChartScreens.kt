@@ -82,15 +82,20 @@ import com.lunar.data.BaziTreeItem
 import com.lunar.data.ChartResult
 import com.lunar.data.ChartLuckItem
 import com.lunar.data.DayunItem
+import com.lunar.data.NoteCreateRequest
+import com.lunar.data.NoteItem
 import com.lunar.data.RecordSaveRequest
 import com.lunar.data.SolarRequest
 import com.lunar.data.UserInfo
 import com.lunar.data.activateLicence
 import com.lunar.data.appJson
+import com.lunar.data.clearNotes
 import com.lunar.data.fetchBaziCalculate
 import com.lunar.data.fetchBaziTreeItems
 import com.lunar.data.fetchCurrentUser
+import com.lunar.data.fetchNotes
 import com.lunar.data.saveChartRecord
+import com.lunar.data.saveNote
 import com.lunar.data.userMessage
 import com.lunar.ui.theme.BrownText
 import com.lunar.ui.theme.DarkGray
@@ -267,10 +272,6 @@ fun ChartFormScreen(
             Text(it, color = RedTitle, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 18.dp))
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
-        PromoBanner(modifier = Modifier.width(320.dp).height(135.dp))
-        Spacer(modifier = Modifier.height(16.dp))
-        HomeLinks()
     }
 }
 
@@ -300,7 +301,8 @@ fun BaziResultScreen(
     var activateCode by rememberSaveable { mutableStateOf("") }
     var isActivating by rememberSaveable { mutableStateOf(false) }
     var showNotebookDialog by rememberSaveable(result.birthTime) { mutableStateOf(false) }
-    var noteList by rememberSaveable(result.birthTime) { mutableStateOf<List<String>>(emptyList()) }
+    var noteList by remember { mutableStateOf<List<NoteItem>>(emptyList()) }
+    var noteListLoading by remember { mutableStateOf(false) }
     var draftNote by rememberSaveable(result.birthTime) { mutableStateOf("") }
     val buttonWidth = 88.dp
     val buttonHeight = 44.dp
@@ -329,6 +331,15 @@ fun BaziResultScreen(
     LaunchedEffect(maxNoteButtonX, maxNoteButtonY) {
         noteButtonX = noteButtonX.coerceIn(0f, maxNoteButtonX)
         noteButtonY = noteButtonY.coerceIn(0f, maxNoteButtonY)
+    }
+
+    LaunchedEffect(showNotebookDialog, authSession?.token) {
+        if (!showNotebookDialog) return@LaunchedEffect
+        val session = authSession ?: return@LaunchedEffect
+        noteListLoading = true
+        runCatching { fetchNotes(session.token, result.birthTime) }
+            .onSuccess { noteList = it }
+        noteListLoading = false
     }
 
     if (showActivateDialog) {
@@ -372,19 +383,34 @@ fun BaziResultScreen(
     if (showNotebookDialog) {
         FourPillarNotebookDialog(
             notes = noteList,
+            isLoading = noteListLoading,
             note = draftNote,
             onNoteChange = { draftNote = it },
-            onSave = {
-                val newNote = draftNote.trim()
-                if (newNote.isNotBlank()) {
-                    noteList = noteList + newNote
+            onSave = { eventTime, content ->
+                if (content.isNotBlank()) {
+                    val session = authSession
+                    if (session != null) {
+                        scope.launch {
+                            runCatching {
+                                saveNote(session.token, NoteCreateRequest(result.birthTime, eventTime, content))
+                            }.onSuccess { saved ->
+                                noteList = noteList + saved
+                            }
+                        }
+                    }
                     draftNote = ""
                 }
                 showNotebookDialog = false
             },
             onClear = {
+                val session = authSession
+                if (session != null) {
+                    scope.launch {
+                        runCatching { clearNotes(session.token, result.birthTime) }
+                        noteList = emptyList()
+                    }
+                }
                 draftNote = ""
-                noteList = emptyList()
                 showNotebookDialog = false
             },
             onDismiss = {
@@ -412,7 +438,6 @@ fun BaziResultScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text("八字排盘结果:", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = DarkText)
                 RawResultHeader(result)
@@ -429,9 +454,7 @@ fun BaziResultScreen(
                         }
                     }
                 )
-                Spacer(modifier = Modifier.height(10.dp))
                 PromoDivider()
-                Spacer(modifier = Modifier.height(10.dp))
                 DayunDetailPanel(result)
             }
 
@@ -511,50 +534,76 @@ internal fun ActivateVipDialog(
 
 @Composable
 private fun FourPillarNotebookDialog(
-    notes: List<String>,
+    notes: List<NoteItem>,
+    isLoading: Boolean,
     note: String,
     onNoteChange: (String) -> Unit,
-    onSave: () -> Unit,
+    onSave: (eventTime: String, content: String) -> Unit,
     onClear: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val now = remember { Calendar.getInstance() }
+    var noteYear by remember { mutableStateOf(now.get(Calendar.YEAR)) }
+    var noteMonth by remember { mutableStateOf(now.get(Calendar.MONTH) + 1) }
+    var noteDay by remember { mutableStateOf(now.get(Calendar.DAY_OF_MONTH)) }
+    var noteHour by remember { mutableStateOf(now.get(Calendar.HOUR_OF_DAY)) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("四柱记事本", color = RedTitle, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (notes.isEmpty()) {
-                    Text("暂无记录", color = Color(0xFF777777), fontSize = 13.sp)
-                } else {
-                    Column(
+                when {
+                    isLoading -> Box(modifier = Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = RedTitle)
+                    }
+                    notes.isEmpty() -> Text("暂无事件记录", color = Color(0xFF777777), fontSize = 13.sp)
+                    else -> Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(120.dp)
+                            .height(140.dp)
                             .verticalScroll(rememberScrollState())
                             .border(1.dp, Color(0xFFE0D2BF), RoundedCornerShape(3.dp))
                             .padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         notes.forEachIndexed { index, item ->
-                            Text(
-                                text = "${index + 1}. $item",
-                                color = DarkText,
-                                fontSize = 13.sp,
-                                lineHeight = 19.sp
-                            )
+                            Column {
+                                Text(
+                                    text = "${index + 1}. ${item.eventTime}",
+                                    color = Color(0xFF888888),
+                                    fontSize = 11.sp
+                                )
+                                Text(
+                                    text = item.content,
+                                    color = DarkText,
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp
+                                )
+                            }
                         }
                     }
                 }
-                Text("当前排盘临时备注", color = DarkText, fontSize = 14.sp)
+                Text("事件时间", color = DarkText, fontSize = 14.sp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    CompactSelect(noteYear, (1900..2100).toList(), "年") { noteYear = it }
+                    CompactSelect(noteMonth, (1..12).toList(), "月") { noteMonth = it }
+                    CompactSelect(noteDay, (1..31).toList(), "日") { noteDay = it }
+                    CompactSelect(noteHour, (0..23).toList(), "时") { noteHour = it }
+                }
+                Text("事件内容", color = DarkText, fontSize = 14.sp)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(150.dp)
+                        .height(120.dp)
                         .border(1.dp, Color(0xFFD0D0D0), RoundedCornerShape(3.dp))
                         .padding(10.dp)
                 ) {
                     if (note.isBlank()) {
-                        Text("点击输入备注", color = Color(0xFF999999), fontSize = 14.sp)
+                        Text("点击输入事件内容", color = Color(0xFF999999), fontSize = 14.sp)
                     }
                     BasicTextField(
                         value = note,
@@ -566,7 +615,10 @@ private fun FourPillarNotebookDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onSave) {
+            TextButton(onClick = {
+                val eventTime = "%04d-%02d-%02d %02d:00".format(noteYear, noteMonth, noteDay, noteHour)
+                onSave(eventTime, note.trim())
+            }) {
                 Text("保存", color = RedTitle)
             }
         },
@@ -720,7 +772,7 @@ private fun CoarseNoteRow(label: String, value: String, background: Color) {
             .fillMaxWidth()
             .background(background)
             .border(0.5.dp, Color.White)
-            .padding(horizontal = 8.dp, vertical = 6.dp)
+            .padding(horizontal = 8.dp, vertical = 0.dp)
     ) {
         Text(label, fontSize = 13.sp, color = DarkText, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.width(4.dp))
@@ -1090,9 +1142,7 @@ private fun CoarseChartPanel(result: ChartResult) {
             CoarseNoteRow("称骨评语:", bone.second, LightGray)
         }
     }
-    Spacer(modifier = Modifier.height(10.dp))
     PromoDivider()
-    Spacer(modifier = Modifier.height(10.dp))
 }
 
 @Composable
@@ -1100,7 +1150,6 @@ private fun RawResultHeader(result: ChartResult) {
     val summary = result.summary
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         SummaryLine(
             "姓名：" to Color.Black,
@@ -1265,7 +1314,7 @@ private fun InteractiveTreePanel(
         loadingDays = false
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column {
         errorMessage?.let {
             Text(it, color = RedTitle, fontSize = 13.sp)
         }
@@ -1491,7 +1540,6 @@ private fun LinkedDetailGrid(
             labelWidth = topLabelWidth
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
         TimelineRows(
             luckItems = result.luckItems,
             yearItems = result.treeItems,
@@ -1501,6 +1549,8 @@ private fun LinkedDetailGrid(
             dizhiNote = calcLiuyi(zhiRow.drop(1), tianganOnly = false),
             dayunShensha = luckItem?.stars.orEmpty(),
             wenChangText = buildWenChangText(result.pillars.day.gan),
+            peachBlossomText = buildPeachBlossomText(result.pillars.day.zhi),
+            cutPeachText = buildCutPeachText(result.pillars.day.zhi),
             riganGeneral = riganGeneral,
             riganGeneralOriginal = riganGeneralOriginal,
             riganMonthOriginal = riganMonthOriginal,
@@ -1554,6 +1604,8 @@ private fun TimelineRows(
     dizhiNote: String,
     dayunShensha: String,
     wenChangText: String,
+    peachBlossomText: String,
+    cutPeachText: String,
     riganGeneral: String,
     riganGeneralOriginal: String,
     riganMonthOriginal: String,
@@ -1578,6 +1630,21 @@ private fun TimelineRows(
 ) {
     val terms = listOf("立春", "惊蛰", "清明", "立夏", "芒种", "小暑", "立秋", "白露", "寒露", "立冬", "大雪", "小寒")
     val luckScrollState = rememberScrollState()
+    var selectedZhenFa by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var showRiganDialog by remember { mutableStateOf(false) }
+    selectedZhenFa?.let { (title, content) ->
+        ZhenFaDialog(title = title, content = content, onDismiss = { selectedZhenFa = null })
+    }
+    if (showRiganDialog) {
+        RiganDialog(
+            riganGeneralOriginal = riganGeneralOriginal,
+            riganGeneral = riganGeneral,
+            riganMonthOriginal = riganMonthOriginal,
+            riganMonthText = riganMonthText,
+            riganMonthSource = riganMonthSource,
+            onDismiss = { showRiganDialog = false }
+        )
+    }
     val visibleYears = selectedLuckStart
         ?.let { start -> (start until start + 10).mapNotNull { year -> yearItems.firstOrNull { it.year == year } } }
         .orEmpty()
@@ -1686,18 +1753,23 @@ private fun TimelineRows(
             cellWidth = timelineCellWidth * 10,
             labelWidth = timelineLabelWidth
         )
-        TableRow(
-            cells = listOf("文昌阵:", wenChangText),
+        ZhenFaTableRow(
+            zhenFaItems = listOf(
+                "文昌阵" to wenChangText,
+                "姻缘桃花阵" to peachBlossomText,
+                "斩桃花阵" to cutPeachText
+            ),
             background = Color.White,
-            height = 96.dp,
+            labelWidth = timelineLabelWidth,
             cellWidth = timelineCellWidth * 10,
-            labelWidth = timelineLabelWidth
+            onItemClick = { name, content -> selectedZhenFa = name to content }
         )
-        CoarseNoteRow("日干总论:", riganGeneralOriginal, MidGray)
-        CoarseNoteRow("总论译文:", riganGeneral, LightGray)
-        CoarseNoteRow("日干月论:", riganMonthOriginal, MidGray)
-        CoarseNoteRow("月论译文:", riganMonthText, LightGray)
-        CoarseNoteRow("出处:", riganMonthSource, MidGray)
+        RiganLunmingRow(
+            background = MidGray,
+            labelWidth = timelineLabelWidth,
+            cellWidth = timelineCellWidth * 10,
+            onClick = { showRiganDialog = true }
+        )
     } else {
         VipLockedRows(onActivateVip = onActivateVip)
     }
@@ -1847,6 +1919,270 @@ private fun buildWenChangText(dayGan: String): String {
         "文昌塔：1个，颜色：$color",
         "北斗七星灯：1盏，颜色：$color，摆放：文昌塔旁边"
     ).joinToString("\n")
+}
+
+private fun buildPeachBlossomText(dayZhi: String): String {
+    val star = when (dayZhi.trim().take(1)) {
+        "寅", "午", "戌" -> "卯"
+        "巳", "酉", "丑" -> "午"
+        "申", "子", "辰" -> "酉"
+        "亥", "卯", "未" -> "子"
+        else -> ""
+    }
+    if (star.isBlank()) return "日支缺失，无法计算"
+    val position = when (star) {
+        "卯" -> "正东"
+        "午" -> "正南"
+        "酉" -> "正西"
+        "子" -> "正北"
+        else -> "未知方位"
+    }
+    val color = when (star) {
+        "卯" -> "绿色/青色"
+        "午" -> "红色/紫色"
+        "酉" -> "金色/白色"
+        "子" -> "黑色/蓝色"
+        else -> "未知颜色"
+    }
+    return listOf(
+        "桃花星：$star",
+        "桃花位：$position",
+        "花瓶（含粉水晶+桃花枝2枝+心仪对象照片）：置于$position",
+        "五行灯：颜色$color，放花瓶旁边"
+    ).joinToString("\n")
+}
+
+private fun buildCutPeachText(dayZhi: String): String {
+    val star = when (dayZhi.trim().take(1)) {
+        "寅", "午", "戌" -> "卯"
+        "巳", "酉", "丑" -> "午"
+        "申", "子", "辰" -> "酉"
+        "亥", "卯", "未" -> "子"
+        else -> ""
+    }
+    if (star.isBlank()) return "日支缺失，无法计算"
+    val position = when (star) {
+        "卯" -> "正东"
+        "午" -> "正南"
+        "酉" -> "正西"
+        "子" -> "正北"
+        else -> "未知方位"
+    }
+    return listOf(
+        "桃花星：$star",
+        "桃花位：$position",
+        "开光桃木剑：1把，剑尖朝外/朝下，置于$position"
+    ).joinToString("\n")
+}
+
+@Composable
+private fun ZhenFaTableRow(
+    zhenFaItems: List<Pair<String, String>>,
+    background: Color,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    onItemClick: (String, String) -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxHeight()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("阵法:", color = DarkText, fontSize = 12.sp, textAlign = TextAlign.Center)
+        }
+        Box(
+            modifier = Modifier
+                .width(cellWidth)
+                .fillMaxHeight()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                zhenFaItems.forEach { (name, content) ->
+                    Text(
+                        text = name,
+                        color = DarkText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable { onItemClick(name, content) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZhenFaDialog(title: String, content: String, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = title,
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Color(0xFF1A1A1A),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "×",
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clickable { onDismiss() }
+                            .padding(4.dp),
+                        color = Color(0xFF888888),
+                        fontSize = 22.sp,
+                        lineHeight = 22.sp
+                    )
+                }
+                Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFE0E0E0)))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(content, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RiganLunmingRow(
+    background: Color,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    onClick: () -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxHeight()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("日干论命:", color = DarkText, fontSize = 12.sp, textAlign = TextAlign.Center)
+        }
+        Box(
+            modifier = Modifier
+                .width(cellWidth)
+                .fillMaxHeight()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "查看日干论命",
+                color = DarkText,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onClick() }
+            )
+        }
+    }
+}
+
+@Composable
+private fun RiganDialog(
+    riganGeneralOriginal: String,
+    riganGeneral: String,
+    riganMonthOriginal: String,
+    riganMonthText: String,
+    riganMonthSource: String,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = "日干论命",
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Color(0xFF1A1A1A),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "×",
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clickable { onDismiss() }
+                            .padding(4.dp),
+                        color = Color(0xFF888888),
+                        fontSize = 22.sp,
+                        lineHeight = 22.sp
+                    )
+                }
+                Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFE0E0E0)))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (riganGeneralOriginal.isNotBlank()) {
+                        Text("日干总论", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(riganGeneralOriginal, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+                    if (riganGeneral.isNotBlank()) {
+                        Text("总论译文", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(riganGeneral, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+                    if (riganMonthOriginal.isNotBlank()) {
+                        Text("日干月论", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(riganMonthOriginal, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+                    if (riganMonthText.isNotBlank()) {
+                        Text("月论译文", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(riganMonthText, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+                    if (riganMonthSource.isNotBlank()) {
+                        Text("出处", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(riganMonthSource, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

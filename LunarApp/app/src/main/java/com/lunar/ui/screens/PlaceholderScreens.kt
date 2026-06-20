@@ -127,8 +127,10 @@ fun AiAnalysisScreen(
     var analysisText by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val scrollState = rememberScrollState()
+    var reanalyzeKey by remember { mutableStateOf(0) }
+    var forceReanalyze by remember { mutableStateOf(false) }
 
-    LaunchedEffect(record.id, authSession?.token) {
+    LaunchedEffect(record.id, authSession?.token, reanalyzeKey) {
         val session = authSession ?: run { errorMessage = "请先登录"; return@LaunchedEffect }
         isLoading = true
         errorMessage = null
@@ -136,7 +138,7 @@ fun AiAnalysisScreen(
         try {
             analyzeChartRecordStream(
                 token = session.token,
-                request = AiAnalyzeRequest(recordId = record.id, resultJson = record.resultJson)
+                request = AiAnalyzeRequest(recordId = record.id, resultJson = record.resultJson, force = forceReanalyze)
             ).collect { chunk ->
                 isLoading = false
                 analysisText += chunk
@@ -146,6 +148,7 @@ fun AiAnalysisScreen(
             if (analysisText.isEmpty()) errorMessage = e.userMessage()
         }
         isLoading = false
+        forceReanalyze = false
     }
 
     LaunchedEffect(analysisText) {
@@ -211,14 +214,31 @@ fun AiAnalysisScreen(
             lineHeight = 16.sp
         )
         Spacer(modifier = Modifier.height(8.dp))
-        TextButton(
-            onClick = onBack,
-            colors = ButtonDefaults.textButtonColors(
-                containerColor = Color(0xFF333A42),
-                contentColor = Color.White
-            )
-        ) {
-            Text("返回记录", fontSize = 14.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextButton(
+                onClick = onBack,
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = Color(0xFF333A42),
+                    contentColor = Color.White
+                )
+            ) {
+                Text("返回记录", fontSize = 14.sp)
+            }
+            TextButton(
+                onClick = {
+                    forceReanalyze = true
+                    reanalyzeKey++
+                },
+                enabled = !isLoading,
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = RedTitle,
+                    contentColor = Color.White,
+                    disabledContainerColor = Color(0xFFB96861),
+                    disabledContentColor = Color.White
+                )
+            ) {
+                Text("AI重新分析", fontSize = 14.sp)
+            }
         }
     }
 }

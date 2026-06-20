@@ -55,7 +55,8 @@ data class ChartRecordItem(
 @Serializable
 data class AiAnalyzeRequest(
     val recordId: Long,
-    val resultJson: String
+    val resultJson: String,
+    val force: Boolean = false
 )
 
 @Serializable
@@ -68,6 +69,22 @@ data class LicenceActivateResponse(
     val isVip: Boolean,
     val vipExpireTime: String,
     val licenceType: String
+)
+
+@Serializable
+data class NoteItem(
+    val id: Long,
+    val birthTime: String,
+    val eventTime: String,
+    val content: String,
+    val createTime: String
+)
+
+@Serializable
+data class NoteCreateRequest(
+    val birthTime: String,
+    val eventTime: String,
+    val content: String
 )
 
 data class AuthSession(

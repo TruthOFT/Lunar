@@ -1,12 +1,17 @@
 package com.lunar.lunar_backend.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lunar.lunar_backend.common.ErrorCode;
 import com.lunar.lunar_backend.dto.AiAnalyzeRequest;
+import com.lunar.lunar_backend.entity.AiAnalysis;
 import com.lunar.lunar_backend.exception.ApiException;
+import com.lunar.lunar_backend.mapper.AiAnalysisMapper;
 import com.lunar.lunar_backend.service.AiService;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -32,6 +37,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class AiServiceImpl implements AiService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Resource
+    private AiAnalysisMapper aiAnalysisMapper;
 
     @Value("${deepseek.api-key:}")
     private String apiKey;
@@ -67,6 +75,13 @@ public class AiServiceImpl implements AiService {
         }
         if (!StringUtils.hasText(apiKey)) {
             throw new ApiException(ErrorCode.AI_CONFIG_MISSING);
+        }
+
+        if (request.recordId() != null && !Boolean.TRUE.equals(request.force())) {
+            AiAnalysis cached = getCached(request.recordId());
+            if (cached != null) {
+                return cached.getContent();
+            }
         }
 
         try {
@@ -107,7 +122,11 @@ public class AiServiceImpl implements AiService {
             if (!contentNode.isTextual() || !StringUtils.hasText(contentNode.asText())) {
                 throw new ApiException(ErrorCode.AI_ANALYZE_FAILED);
             }
-            return contentNode.asText();
+            String content = contentNode.asText();
+            if (request.recordId() != null) {
+                saveCache(request.recordId(), content);
+            }
+            return content;
         } catch (ApiException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -126,6 +145,24 @@ public class AiServiceImpl implements AiService {
             emitter.completeWithError(new ApiException(ErrorCode.AI_CONFIG_MISSING));
             return;
         }
+
+        if (request.recordId() != null && !Boolean.TRUE.equals(request.force())) {
+            AiAnalysis cached = getCached(request.recordId());
+            if (cached != null) {
+                try {
+                    String content = cached.getContent();
+                    int chunkSize = 200;
+                    for (int i = 0; i < content.length(); i += chunkSize) {
+                        emitter.send(content.substring(i, Math.min(i + chunkSize, content.length())));
+                    }
+                    emitter.complete();
+                } catch (Exception e) {
+                    try { emitter.completeWithError(e); } catch (Exception ignored) {}
+                }
+                return;
+            }
+        }
+
         try {
             Map<String, Object> requestBody = Map.of(
                     "model", model,
@@ -152,6 +189,7 @@ public class AiServiceImpl implements AiService {
                     .timeout(Duration.ofMillis(readTimeout))
                     .build();
 
+            StringBuilder accumulated = new StringBuilder();
             HttpResponse<InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
                 String line;
@@ -162,14 +200,42 @@ public class AiServiceImpl implements AiService {
                     try {
                         JsonNode node = objectMapper.readTree(data);
                         String content = node.path("choices").path(0).path("delta").path("content").asText("");
-                        if (!content.isEmpty()) emitter.send(content);
+                        if (!content.isEmpty()) {
+                            emitter.send(content);
+                            accumulated.append(content);
+                        }
                     } catch (Exception ignored) {}
                 }
             }
             emitter.complete();
+            if (request.recordId() != null && accumulated.length() > 0) {
+                saveCache(request.recordId(), accumulated.toString());
+            }
         } catch (Exception e) {
             log.error("DeepSeek stream failed", e);
             try { emitter.completeWithError(e); } catch (Exception ignored) {}
+        }
+    }
+
+    private AiAnalysis getCached(Long recordId) {
+        return aiAnalysisMapper.selectOne(
+                new LambdaQueryWrapper<AiAnalysis>().eq(AiAnalysis::getRecordId, recordId)
+        );
+    }
+
+    private void saveCache(Long recordId, String content) {
+        AiAnalysis existing = getCached(recordId);
+        if (existing != null) {
+            aiAnalysisMapper.update(null,
+                    new LambdaUpdateWrapper<AiAnalysis>()
+                            .eq(AiAnalysis::getRecordId, recordId)
+                            .set(AiAnalysis::getContent, content)
+            );
+        } else {
+            AiAnalysis entity = new AiAnalysis();
+            entity.setRecordId(recordId);
+            entity.setContent(content);
+            aiAnalysisMapper.insert(entity);
         }
     }
 
