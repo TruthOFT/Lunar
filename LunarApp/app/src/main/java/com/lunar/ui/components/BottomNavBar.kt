@@ -21,7 +21,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lunar.navigation.AppDestinations
-import com.lunar.ui.theme.DarkText
+import com.lunar.ui.theme.LinkBlue
+import com.lunar.ui.theme.MidGray
 import com.lunar.ui.theme.NavBackground
 
 @Composable
@@ -51,11 +52,11 @@ fun BottomNavBar(
                     painter = painterResource(item.icon),
                     contentDescription = item.label,
                     modifier = Modifier.size(23.dp),
-                    tint = if (item == currentDestination) Color.Black else DarkText
+                    tint = if (item == currentDestination) LinkBlue else MidGray
                 )
                 Text(
                     item.label,
-                    color = if (item == currentDestination) Color.Black else DarkText,
+                    color = if (item == currentDestination) LinkBlue else MidGray,
                     fontSize = 12.sp,
                     lineHeight = 13.sp
                 )

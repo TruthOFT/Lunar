@@ -636,8 +636,7 @@ private fun FourPillarNotebookDialog(
 }
 
 @Composable
-private fun ShenshaDetailDialog(name: String, onDismiss: () -> Unit) {
-    val info = SHENSHA_DATA[name] ?: return
+private fun ShenshaDetailDialog(info: ShenshaInfo, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
@@ -646,7 +645,6 @@ private fun ShenshaDetailDialog(name: String, onDismiss: () -> Unit) {
                 .background(Color.White)
         ) {
             Column {
-                // 标题栏
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -671,7 +669,6 @@ private fun ShenshaDetailDialog(name: String, onDismiss: () -> Unit) {
                     )
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFE0E0E0)))
-                // 正文（可滚动）
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -679,15 +676,14 @@ private fun ShenshaDetailDialog(name: String, onDismiss: () -> Unit) {
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text(info.summary, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Text("问真精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(info.tip, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("古诀", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text(info.formula, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Text(info.gujue, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("查法", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text(info.lookup, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
-                    Text(info.detail, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Text(info.chafa, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
                 }
             }
         }
@@ -1078,9 +1074,26 @@ private fun CoarseChartPanel(result: ChartResult) {
         Regex("【${p}神煞】：([^\\n]+)").find(result.rawText)?.groupValues?.getOrNull(1)
             ?.split("、")?.filter { it.isNotBlank() }.orEmpty()
     }
+    val shenshaMap = rememberShenshaMap()
     var selectedShensha by remember { mutableStateOf<String?>(null) }
-    if (selectedShensha != null) {
-        ShenshaDetailDialog(name = selectedShensha!!, onDismiss = { selectedShensha = null })
+    selectedShensha?.let { name ->
+        shenshaMap[name]?.let { info ->
+            ShenshaDetailDialog(info = info, onDismiss = { selectedShensha = null })
+        }
+    }
+    val nayinMap = rememberNayinMap()
+    var selectedNayin by remember { mutableStateOf<String?>(null) }
+    selectedNayin?.let { name ->
+        nayinMap[name]?.let { entry ->
+            NayinDetailDialog(entry = entry, onDismiss = { selectedNayin = null })
+        }
+    }
+    val shishenDetailMap = rememberShishenDetailMap()
+    var selectedShishenDetail by remember { mutableStateOf<String?>(null) }
+    selectedShishenDetail?.let { name ->
+        shishenDetailMap[name]?.let { entry ->
+            ShishenDetailDialog2(entry = entry, onDismiss = { selectedShishenDetail = null })
+        }
     }
 
     Column(
@@ -1092,11 +1105,15 @@ private fun CoarseChartPanel(result: ChartResult) {
             cells = listOf("四柱:", "年柱", "月柱", "日柱", "时柱"),
             background = DarkGray, cellWidth = cellW, labelWidth = labelW
         )
-        TableRow(
-            cells = listOf("十神:") + pillars.mapIndexed { i, p ->
+        ShishenGodTableRow(
+            godNames = pillars.mapIndexed { i, p ->
                 if (i == 2) (if (isFemale) "元女" else "元男") else p.ganGod
             },
-            background = LightGray, cellWidth = cellW, labelWidth = labelW
+            shishenMap = shishenDetailMap,
+            background = LightGray,
+            labelWidth = labelW,
+            cellWidth = cellW,
+            onGodClick = { selectedShishenDetail = it }
         )
         TableRow(
             cells = listOf("天干:") + pillars.map { it.gan },
@@ -1117,9 +1134,13 @@ private fun CoarseChartPanel(result: ChartResult) {
             background = MidGray, height = 78.dp,
             cellWidth = cellW, labelWidth = labelW
         )
-        TableRow(
-            cells = listOf("纳音:") + pillars.map { it.nayin },
-            background = LightGray, cellWidth = cellW, labelWidth = labelW
+        NayinTableRow(
+            nayinNames = pillars.map { it.nayin },
+            nayinMap = nayinMap,
+            background = LightGray,
+            labelWidth = labelW,
+            cellWidth = cellW,
+            onNayinClick = { selectedNayin = it }
         )
         TableRow(
             cells = listOf("空亡:") + pillars.map { calcXunKong(it.gz()) },
@@ -1127,6 +1148,7 @@ private fun CoarseChartPanel(result: ChartResult) {
         )
         ShenshaTableRow(
             shenshaPerColumn = shenshaLists,
+            shenshaMap = shenshaMap,
             background = LightGray,
             cellWidth = cellW,
             labelWidth = labelW,
@@ -2319,61 +2341,22 @@ private val DZ_CANGGAN = listOf(
     "丁己", "己丁乙", "庚壬戊", "辛", "戊辛丁", "壬甲"
 )
 
-private data class ShenshaInfo(val name: String, val summary: String, val formula: String, val lookup: String, val detail: String)
+@Serializable
+private data class ShenshaInfo(val name: String, val tip: String, val gujue: String, val chafa: String, val category: String = "")
 
-private val SHENSHA_DATA: Map<String, ShenshaInfo> = mapOf(
-    "天乙贵人" to ShenshaInfo("天乙贵人", "一生人缘佳，遇事有人解救危难，化险为夷。", "甲戊庚牛羊，乙己鼠猴乡，丙丁猪鸡位，壬癸兔蛇藏，六辛逢虎马，此是贵人方。", "以日干或年干查四地支。甲戊庚见丑未；乙己见子申；丙丁见亥酉；壬癸见巳卯；辛见午寅。", "天乙贵人是命中最吉之神，所到之处一切凶煞隐然而避。命带天乙贵人者，心性聪明，出入近贵，一生少病，人缘极佳。大运流年逢之，有生官发财之机。女命天乙贵人入命且日主自坐二德者，可嫁贵夫。"),
-    "太极贵人" to ShenshaInfo("太极贵人", "聪明好学，喜神秘事物（与华盖并用，又临戌亥，在易学方面多有成就）。", "甲乙生人子午中，丙丁鸡兔定亨通，戊己两干临四季，庚辛寅亥禄丰隆，壬癸巳申偏喜美，值此应当福气钟，更须贵格来相扶，候封万户到三公。", "以日干或年干查四地支：甲乙见子或午；丙丁见卯或酉；戊己见辰戌丑未；庚辛见寅或亥；壬癸见巳或申。", "太极贵人是造物之初、造化始终相保之贵。命带太极贵人者，聪明好学，有钻研精神，做事有始有终，为人正直，喜文史哲宗教。如得生旺及有贵格吉星相扶，主气宇轩昂，福寿双全，富贵人间。"),
-    "天德贵人" to ShenshaInfo("天德贵人", "具有天地德秀之气，为逢凶化吉之神，主福寿。", "正丁二坤中，三壬四辛同，五乾六甲上，七癸八寅同，九丙十归乙，子巽丑庚中。", "以月支查四柱天干地支：正月见丁，二月见申，三月见壬，四月见辛，五月见亥，六月见甲，七月见癸，八月见寅，九月见丙，十月见乙，十一月见巳，十二月见庚。", "天德贵人是祖先积德余荫遗留给子孙的福德，可化解各种凶煞。命带天德者，心性善良，忠孝贤能，一生吉利，荣华富贵。"),
-    "月德贵人" to ShenshaInfo("月德贵人", "太阴之德，功能与天德略同，主福分深厚，能逢凶化吉。", "寅午戌月见丙，申子辰月见壬，亥卯未月见甲，巳酉丑月见庚。", "以月支查四柱天干：寅午戌月见丙；申子辰月见壬；亥卯未月见甲；巳酉丑月见庚。", "月德贵人以月支为主，为解救之神，遇危难时可幸免于难。命带月德者，吉命增吉，凶命减凶，为人多仁慈敏慧。虽有枭杀伤劫，也可以逢凶化吉。但最忌逢刑冲，遇之则无力化解。"),
-    "德秀贵人" to ShenshaInfo("德秀贵人", "仪容清秀，温柔爽朗，涵养出众，很有才华。", "寅午戌月，丙丁为德，戊癸为秀；申子辰月，壬癸戊己为德，丙辛甲己为秀；巳酉丑月，庚辛为德，乙庚为秀；亥卯未月，甲乙为德，丁壬为秀。", "以生月为主查四柱天干。寅午戌月天干见丙丁为德，见戊癸合为秀；申子辰月见壬癸戊己为德，见丙辛合或甲己合为秀；巳酉丑月见庚辛为德，见乙庚合为秀；亥卯未月见甲乙为德，见丁壬合为秀。", "德者阴阳解凶之神，秀者天地清秀之气。命带德秀贵人且无冲破克压者，聪明晓事，温厚和气，文业通达，逢凶化吉。若遇学堂，更带财官，主贵。多可能在公检法或事业单位工作。"),
-    "天德合" to ShenshaInfo("天德合", "与天德贵人同功，虽稍逊，亦有化解凶厄之力。", "正月见壬，二月见巳，三月见丁，四月见丙，五月见寅，六月见己，七月见戊，八月见亥，九月见辛，十月见庚，十一月见申，十二月见乙。", "天德与天干五合或地支六合者即为天德合。正月天德丁，壬与丁合；二月天德申，巳与申合；三月天德壬，丁与壬合；以此类推。", "天德合是与天德贵人相合的神煞，如没有天德贵人，有天德合也可起到天德贵人的作用。吉庆程度比天德稍次，但仍主吉上加吉、福泽加倍。"),
-    "月德合" to ShenshaInfo("月德合", "与月德贵人同功，能解百祸，主贵人相助。", "正月见辛，二月见己，三月见丁，四月见乙，五月见辛，六月见己，七月见丁，八月见乙，九月见辛，十月见己，十一月见丁，十二月见乙。", "月德与天干五合者即为月德合。正月月德丙，丙与辛合；二月月德甲，甲与己合；三月月德壬，壬与丁合；以此类推。", "月德合是与月德贵人相合的神煞，作用同月德，但吉庆程度稍次。入课主解百祸，有贵人帮扶。在择日中，月德合日为吉日。"),
-    "福星贵人" to ShenshaInfo("福星贵人", "主一生福禄安康，衣食无忧，遇事多得贵人相助。", "甲丙相邀入虎乡，更游鼠穴最高强，戊猴己未丁宜亥，乙癸逢牛卯禄昌，庚赶马头辛到巳，壬骑龙背喜非常。", "以年干或日干查四柱地支。甲丙见寅或子；戊见申；己见未；丁见亥；乙癸见丑或卯；庚见午；辛见巳；壬见辰。", "福星贵人是福气之所在，人命逢之，一生衣食无忧，多遇好事，生活安稳富足，少有大的灾祸。与文昌、学堂并见，更利学业功名。"),
-    "文昌贵人" to ShenshaInfo("文昌贵人", "聪明过人，才华横溢，利于考试和文化事业。", "甲乙巳午丙戊申，丁己鸡位庚猪辛鼠壬虎癸卯。", "以日干查四地支：甲见巳、乙见午、丙戊见申、丁己见酉、庚见亥、辛见子、壬见寅、癸见卯。", "文昌者，食神之临官所在，为建禄之称。命带文昌贵人，主天资聪明，文笔好，记性好，举止文雅，好学上进，一生近官利贵。文昌坐于喜用神且生旺，多能取得高学历。"),
-    "学堂" to ShenshaInfo("学堂", "主学业功名，聪明智巧，登科及第，学业大展宏图。", "金命见巳，辛巳为正；木命见亥，己亥为正；水命见申，甲申为正；火命见寅，丙寅为正；土命见申，戊申为正。", "以年纳音查月日时支。年柱纳音五行：金命见巳，木命见亥，水命见申，火命见寅，土命见申。", "学堂如人读书在学堂，是文星所在，主学业功名之事。此星入命，主人聪明，可登科及第，文章出众。学堂为用神，岁运逢之，利考学。"),
-    "词馆" to ShenshaInfo("词馆", "文章冠世，聪明智巧，一生富贵，声名远播。", "甲干见庚寅，乙干见辛卯；丙干见乙巳，丁干见戊午；戊干见丁巳，己干见庚午；庚干见壬申，辛干见癸酉；壬干见癸亥，癸干见壬戌。", "以日干查四柱地支。甲见庚寅，乙见辛卯，丙见乙巳，丁见戊午，戊见丁巳，己见庚午，庚见壬申，辛见癸酉，壬见癸亥，癸见壬戌。", "词馆者，如今之翰林院，取学业精专、文章出类之意。词馆入命，主人秀气生发，聪明智巧，文章冠世，一生富贵。宜生旺，不宜克害冲破。"),
-    "魁罡" to ShenshaInfo("魁罡", "聪明刚烈，性急好胜，不喜受人约束。", "壬辰、庚辰、庚戌、戊戌四日。", "以日柱查。日柱为壬辰、庚辰、庚戌、戊戌之一者即为魁罡。", "魁罡乃天罡地煞之星，命带魁罡者，性急刚烈，聪明果断，好胜心强，不喜受人约束。若行运得宜，多主有权势。男命魁罡多为掌权之人，女命魁罡则婚姻多波折。"),
-    "国印贵人" to ShenshaInfo("国印贵人", "主诚实可靠，有掌印之权，办事稳妥，受人信任。", "甲见戌，乙见亥，丙见丑，丁见寅，戊见丑，己见寅，庚见辰，辛见巳，壬见未，癸见申。", "以日干或年干查四柱地支。甲见戌，乙见亥，丙见丑，丁见寅，戊见丑，己见寅，庚见辰，辛见巳，壬见未，癸见申。", "国印贵人是管理国家印信之星，命带国印贵人者，诚实可靠，做事稳重，办事公允，易得领导信任，有掌印之权或从事公职之缘。"),
-    "驿马" to ShenshaInfo("驿马", "主奔波、变动、升迁、调动、远行。", "申子辰马在寅，寅午戌马在申，巳酉丑马在亥，亥卯未马在巳。", "以年支或日支查四柱地支。申子辰见寅；寅午戌见申；巳酉丑见亥；亥卯未见巳。", "驿马主走动、外出、奔波、变迁。贵人驿马多升擢，常人驿马多奔波。吉神坐马有乔迁之喜或顺动之利；凶神坐马则奔走四方，忙于生计。"),
-    "华盖" to ShenshaInfo("华盖", "聪明好学，艺术天赋，与宗教有缘，但易孤独。", "寅午戌见戌，巳酉丑见丑，申子辰见辰，亥卯未见未。", "以年支或日支查四柱地支。寅午戌见戌；巳酉丑见丑；申子辰见辰；亥卯未见未。", "华盖是艺术与孤独之星。命带华盖者，聪明好学，研究心盛，格调高尚，有艺术天赋，但也较孤僻，不喜随波逐流。与太极贵人并见者，必为五术中人，佛缘更深。"),
-    "将星" to ShenshaInfo("将星", "有领导才能，可在军警、管理领域掌权。", "申子辰见子，寅午戌见午，巳酉丑见酉，亥卯未见卯。", "以年支或日支查四柱地支。申子辰见子；寅午戌见午；巳酉丑见酉；亥卯未见卯。", "将星是三合局中神之位，代表领导力和威严。命带将星者，有统率才能，威望高，适合担任管理或军警职务，易在专业领域出类拔萃。"),
-    "金舆" to ShenshaInfo("金舆", "主富贵荣华，出行有车马之便，生活安稳。", "甲龙乙蛇丙戊羊，丁己猴歌庚犬方，辛猪壬牛癸逢虎。", "以日干查四柱地支。甲见辰、乙见巳、丙戊见未、丁己见申、庚见戌、辛见亥、壬见丑、癸见寅。", "金舆为金车之象，命带金舆贵人者，多富贵荣华，出行有车马之便，生活安稳。女命逢金舆，主旺夫益子。"),
-    "金神" to ShenshaInfo("金神", "个性刚毅，聪明多才，然人缘较差。", "乙丑，己巳，癸酉。", "查日柱或时柱，如日柱或时柱是乙丑、己巳、癸酉，则命带金神。", "金神为刚金之精，命带金神者性多威猛强烈，胆大好胜，常使人敬而远之。刚金要得火炼，故有金神入火乡、发如猛虎之说。弱命喜运行火乡，便为贵命。"),
-    "五鬼" to ShenshaInfo("五鬼", "主小人暗算，官非口舌，阴人作祟，易招灾祸。", "甲己巳午癸未存，乙庚寅卯守黄昏，丙辛申酉，丁壬亥子，戊癸寅卯。", "以年干查四柱地支，依五鬼歌诀查之。", "五鬼为凶煞之一，主小人暗算、官非口舌、阴人作祟。命带五鬼者，易有莫名其妙的是非和灾祸，需多加防范，行善积德可减轻其凶性。"),
-    "天医" to ShenshaInfo("天医", "掌管疾病之星，宜从事医药、心理学、哲学等职业。", "正月戌，二月亥，三月子，四月丑，五月寅，六月卯，七月辰，八月巳，九月午，十月未，十一月申，十二月酉。", "以月支查其它地支，月建后五辰为天医。正戌、二亥、三子、四丑、五寅、六卯、七辰、八巳、九午、十未、十一申、十二酉。", "天医是掌管疾病之事的星神。四柱逢天医，如不旺又无贵人吉神相扶，常患疾病或身弱无力。若生旺又有贵人相助，不仅身体健壮，且特别适合从事医学、心理学、哲学等职业。"),
-    "禄神" to ShenshaInfo("禄神", "日主得根有利，身体健康，充满信心。", "甲禄寅，乙禄卯，丙禄巳，丁禄午，戊禄巳，己禄午，庚禄申，辛禄酉，壬禄亥，癸禄子。", "以日干查四柱地支。甲见寅，乙见卯，丙戊见巳，丁己见午，庚见申，辛见酉，壬见亥，癸见子。", "禄神代表食禄、俸禄、福气。命带禄神者，身体健康，充满信心，一生勤劳积累财富。禄在年支叫岁禄，月支叫建禄，日支叫专禄，时支叫归禄。建禄生是月，财官喜透天。"),
-    "天赦" to ShenshaInfo("天赦", "能解人灾祸，遇难成祥，逢凶化吉，尤其对犯法之人有宽大处理之可能。", "春戊寅，夏甲午，秋戊申，冬甲子。", "春季（寅卯辰月）生人见戊寅日；夏季（巳午未月）生人见甲午日；秋季（申酉戌月）生人见戊申日；冬季（亥子丑月）生人见甲子日。", "天赦是神煞中的吉神，主赦免。八字命带天赦之人，能解灾祸，遇难成祥，即使是触犯了法律也有可能获得宽大处理。若日元得旺，配合得宜，多为大人物极品之贵。"),
-    "红鸾" to ShenshaInfo("红鸾", "主婚姻喜庆，异性缘佳，有良缘之兆。", "子见卯，丑见寅，寅见丑，卯见子，辰见亥，巳见戌，午见酉，未见申，申见未，酉见午，戌见巳，亥见辰。", "以年支查四柱地支。子年见卯，丑年见寅，寅年见丑，卯年见子，辰年见亥，巳年见戌，午年见酉，未年见申，申年见未，酉年见午，戌年见巳，亥年见辰。", "红鸾星属阴水，主婚姻喜庆。中年之前遇之主吉，属喜庆之事，也有升迁之喜。命带红鸾者，多主婚恋顺利，有良缘之兆。红鸾在疾厄宫时主血光之灾。"),
-    "天喜" to ShenshaInfo("天喜", "主缘订、喜庆及生育，配偶条件好。", "子见酉，丑见申，寅见未，卯见午，辰见巳，巳见辰，午见卯，未见寅，申见丑，酉见子，戌见亥，亥见戌。", "以年支查四柱地支。子年见酉，丑年见申，寅年见未，卯年见午，辰年见巳，巳年见辰，午年见卯，未年见寅，申年见丑，酉年见子，戌年见亥，亥年见戌。", "天喜星属阳水，主缘订、喜庆及生育。命带天喜者，主配偶条件好，婚恋顺利，生活喜庆。天喜在疾厄宫时主脑神经衰弱。"),
-    "流霞" to ShenshaInfo("流霞", "主血光之灾，男犯血光被伤刀，女犯流霞产后死。", "甲鸡乙犬丙羊加，丁猴戊巳日时查；己马庚龙辛见兔，壬猪癸虎是流霞。", "以日干或年干查四柱地支。甲见酉，乙见戌，丙见未，丁见申，戊见巳，己见午，庚见辰，辛见卯，壬见亥，癸见寅。", "流霞煞主血光之灾，男命逢之主血光被伤刀，女命逢之主产后血崩或难产。贵人寿终遭非命，恶人临死苦挣扎。岁运逢之，须防意外伤害。"),
-    "红艳" to ShenshaInfo("红艳", "有魅力，多情，婚姻不顺，易有外遇桃花。", "甲日午，乙日申，丙日寅，丁日未，戊日辰，己日辰，庚日戌，辛日酉，壬日子，癸日申。", "以日干查四柱地支。甲见午，乙见申，丙见寅，丁见未，戊见辰，己见辰，庚见戌，辛见酉，壬见子，癸见申。", "红艳煞是桃花的一种。命见红艳煞，风流多情，好美色，多数有外遇桃花，男女感情方面把控不好，容易有纠纷。女命见之，难免私情，婚前失贞，一谈恋爱就可能同居。"),
-    "天罗" to ShenshaInfo("天罗", "主疾病之灾、牢狱之灾，男命忌之。", "辰为天罗，火命人逢戌亥为天罗，戌见亥，亥见戌为天罗。", "以年支或日支查四柱地支。火命人（年柱纳音为火）四柱地支见戌或亥；或四柱地支中戌见亥、亥见戌。", "天罗主疾病、牢狱之灾，大运流年遇之人不利，男命更忌。如得天月二德解救可无忧。"),
-    "地网" to ShenshaInfo("地网", "主疾病之灾、牢狱之灾，女命忌之。", "巳为地网，水土命逢辰巳为地网，辰见巳，巳见辰为地网。", "以年支或日支查四柱地支。水土命（年柱纳音为水或土）四柱地支见辰或巳；或四柱地支中辰见巳、巳见辰。", "地网主疾病、牢狱之灾，大运流年遇之人不利，女命更忌。与天罗并论，如得天月二德解救可无忧。"),
-    "羊刃" to ShenshaInfo("羊刃", "刚强威猛，性烈易招灾祸，或伤及六亲。", "甲卯，乙寅，丙戊午，丁己巳，庚酉，辛申，壬子，癸亥。", "以日干查四柱地支。甲见卯，乙见寅，丙戊见午，丁己见巳，庚见酉，辛见申，壬见子，癸见亥。", "羊刃为刚强威猛之星，禄过则刃生。身强不喜羊刃，因能夺财劫官，若不刑克妻子，必然六亲不和。身弱遇七杀驾羊刃，则主武贵非凡。有杀无刃不显，有刃无杀不威。"),
-    "飞刃" to ShenshaInfo("飞刃", "主血光、意外伤害，好勇斗狠，易惹是非。", "甲辰，乙卯，丙午，丁巳，戊午，己巳，庚未，辛申，壬子，癸亥。", "以日干查四柱地支。羊刃对冲之位为飞刃。甲见辰，乙见卯，丙见午，丁见巳，戊见午，己见巳，庚见未，辛见申，壬见子，癸见亥。", "飞刃是与羊刃对冲的凶煞，主血光、意外伤害。命带飞刃者好勇斗狠，易惹是非，行运逢之多有灾厄。与羊刃并见时，更需谨慎。"),
-    "血刃" to ShenshaInfo("血刃", "主血光之灾，意外伤害，易有外伤或手术。", "申子辰见巳，寅午戌见亥，巳酉丑见寅，亥卯未见申。", "以年支或日支查四柱地支，与劫煞相同。申子辰见巳，寅午戌见亥，巳酉丑见寅，亥卯未见申。", "血刃主血光之灾，意外伤害。命带血刃者一生易有外伤或手术之险，大运流年逢之，须防刀伤、车祸等意外。"),
-    "八专" to ShenshaInfo("八专", "主好色纵欲，男女感情混乱，多淫欲之事。", "甲寅、乙卯、丁未、戊戌、己未、庚申、辛酉、癸丑八日。", "以日柱查。日柱为甲寅、乙卯、丁未、戊戌、己未、庚申、辛酉、癸丑之一者，即为八专日。", "八专专指淫欲之煞，命值八专日者，多好色纵欲，男女感情混乱。男命逢之多淫欲，女命逢之尤忌，多主不贞。日柱为八专者尤重。"),
-    "九丑" to ShenshaInfo("九丑", "主外貌俊美但情欲重，易有风流韵事，婚姻不顺。", "戊子、戊午、己酉、己卯、乙卯、辛酉、辛卯、丁酉、壬子九日。", "以日柱查。日柱为戊子、戊午、己酉、己卯、乙卯、辛酉、辛卯、丁酉、壬子之一者，即为九丑日。", "九丑为妨害之煞，主外貌俊美但情欲重，易有风流韵事，婚姻不顺。女命逢之，多主不贞淫乱；男命逢之，多主好色纵欲。与八专并称。"),
-    "劫煞" to ShenshaInfo("劫煞", "外来的、突发的灾祸或劫难。", "申子辰见巳，亥卯未见申，寅午戌见亥，巳酉丑见寅。", "以年支或日支查四柱地支。申子辰见巳；亥卯未见申；寅午戌见亥；巳酉丑见寅。", "劫煞为三合局绝地，劫者夺也，自外夺之为劫。命带劫煞者，须防意外事故、小人争夺之事。劫在五行绝处，其性凶暴，为灾不可当。"),
-    "灾煞" to ShenshaInfo("灾煞", "主血光横死之灾，官刑牢狱之事，又名白虎煞。", "申子辰见午，寅午戌见子，巳酉丑见卯，亥卯未见酉。", "以年支查四柱地支。申子辰年生人见午；寅午戌年生人见子；巳酉丑年生人见卯；亥卯未年生人见酉。", "灾煞即白虎煞，多主血光横死之灾。运走忌神逢白虎煞临太岁，多有孝服。居柱中水火支，防火烧水溺；居金木支，防棍杖剑刃；居土支，防摔跌瘟疫。"),
-    "元辰" to ShenshaInfo("元辰", "主事多磨，耗财败家，内心烦乱，又名大耗。", "阳男阴女：子未、丑申、寅酉、卯戌、辰亥、巳子、午丑、未寅、申卯、酉辰、戌巳、亥午；阴男阳女相反。", "阳男阴女，子年见未，丑年见申，寅年见酉，卯年见戌，辰年见亥，巳年见子，午年见丑，未年见寅，申年见卯，酉年见辰，戌年见巳，亥年见午。阴男阳女反之。", "元辰又名大耗，是凶煞。命带元辰者，事多磨，耗财败家，内心烦乱，与六亲缘薄。生旺稍可，死绝尤甚。大运流年逢元辰，多有耗损之事。"),
-    "空亡" to ShenshaInfo("空亡", "主谋事难成，有名无实，劳而无功，易有失落感。", "甲己申酉，乙庚午未，丙辛辰巳，丁壬寅卯，戊癸子丑。", "以日柱或年柱查旬空，每旬中地支两位为空亡。甲子旬戌亥空，甲戌旬申酉空，甲申旬午未空，甲午旬辰巳空，甲辰旬寅卯空，甲寅旬子丑空。", "空亡为十干不到之地，主谋事难成，有名无实，劳而无功。命带空亡者，易有失落感，一生多虚名虚利。吉神逢空亡则减福，凶神逢空亡则减凶。与贵人并见可稍解。"),
-    "童子煞" to ShenshaInfo("童子煞", "主婚姻不顺，多灾多难，易有精神困扰。", "春秋寅子贵，冬夏卯未辰；金木马卯合，水火鸡犬多；土命逢辰巳，童子定不错。", "春秋季（寅卯辰月）生人日时支见寅或子；冬夏季（亥子丑月、巳午未月）生人日时支见卯、未、辰；纳音金木命见午卯；纳音水火命见酉戌；纳音土命见辰巳。", "童子煞是民间流传较广的凶煞，主婚姻不顺，多灾多难，易有精神困扰。查法流派众多，不同地域存在差异。通常以生月、日时支、纳音五行综合判断。"),
-    "天厨" to ShenshaInfo("天厨", "一生不愁吃穿，食禄不虞匮乏，福禄满堂。", "甲见巳，乙见午，丙见子，丁见巳，戊见午，己见申，庚见寅，辛见午，壬见酉，癸见亥。", "以日干查四柱地支。甲见巳，乙见午，丙见子，丁见巳，戊见午，己见申，庚见寅，辛见午，壬见酉，癸见亥。", "天厨乃食神建禄之宫，食神是人命福星，食神得禄，其福必厚。天厨入命，如不逢刑冲克破空亡，一生衣食无忧，可享天赐之福。八字带天厨贵人，一生平安吉顺，福禄优游。"),
-    "孤辰" to ShenshaInfo("孤辰", "主孤独固执，不利六亲，男命尤忌。", "亥子丑见寅，寅卯辰见巳，巳午未见申，申酉戌见亥。", "以年支查四柱地支。亥子丑年生人见寅；寅卯辰年生人见巳；巳午未年生人见申；申酉戌年生人见亥。", "孤辰主孤独、孤僻。男命遇孤辰，主形孤肉露，面无和气，不利六亲。与空亡并见，自小无倚；与驿马并见，放荡他乡。"),
-    "寡宿" to ShenshaInfo("寡宿", "主孤独寡和，不利婚姻，女命尤忌。", "亥子丑见戌，寅卯辰见丑，巳午未见辰，申酉戌见未。", "以年支查四柱地支。亥子丑年生人见戌；寅卯辰年生人见丑；巳午未年生人见辰；申酉戌年生人见未。", "寡宿主孤独寡和，不利婚姻。女命逢寡宿，多愁善感，消极悲观，婚姻多波折。孤辰寡宿两星并见者，更显孤独。"),
-    "亡神" to ShenshaInfo("亡神", "主城府深，老谋深算，与凶神并见则性狭易燥，常犯官讼。", "申子辰见亥，亥卯未见寅，寅午戌见巳，巳酉丑见申。", "以年支或日支查四柱地支。申子辰见亥；亥卯未见寅；寅午戌见巳；巳酉丑见申。", "亡者失也，自内失之为亡。亡神临财局为财旺，临官局为官旺。如临喜用与贵人同柱，主人城府深，老谋深算；临绝地或忌神，则为人轻浮狂妄，常犯是非官讼。"),
-    "十恶大败" to ShenshaInfo("十恶大败", "主花钱如流水，不善理财，财富难聚。", "甲辰乙巳与壬申，丙申丁亥及庚辰，戊戌癸亥加辛巳，己丑都来十位神。", "以日柱查。日柱为甲辰、乙巳、丙申、丁亥、戊戌、己丑、庚辰、辛巳、壬申、癸亥之一者，即为十恶大败日。", "十恶大败实际是日主禄位值空亡。命带十恶大败者，善意外破财，事物成空，屡受挫折。如带贵气者则有殊福。诀云：十恶大败若真，贵为将，贱为寇。"),
-    "桃花" to ShenshaInfo("桃花", "主异性缘佳，风流多情，聪慧灵巧，有艺术天赋。", "申子辰见酉，寅午戌见卯，巳酉丑见午，亥卯未见子。", "以年支或日支查四柱地支。申子辰见酉；寅午戌见卯；巳酉丑见午；亥卯未见子。", "桃花是五行沐浴之地，又名咸池。命带桃花者，聪明俊秀，容貌出众，多才多艺，异性缘佳。桃花在年柱、月柱为内桃花，主夫妻恩爱；在日柱、时柱为外桃花，易有情感纠纷。"),
-    "孤鸾" to ShenshaInfo("孤鸾", "主婚姻不顺，晚婚或无婚，男克妻女克夫。", "甲寅、乙巳、丙午、丁巳、戊午、戊申、辛亥、壬子八日。", "以日柱查。日柱为甲寅、乙巳、丙午、丁巳、戊午、戊申、辛亥、壬子之一者，即为孤鸾日。", "孤鸾煞主婚姻不顺，男克妻，女克夫，夫妻难得和睦，多为晚婚或无婚之命。女命逢孤鸾尤忌，多主婚姻多波折。"),
-    "阴差阳错" to ShenshaInfo("阴差阳错", "主婚姻不顺，夫妻不和，家道不宁。", "丙子丁丑戊寅日，辛卯壬辰癸巳时，丙午丁未戊申时，辛酉壬戌癸亥时。", "以日柱查。日柱为丙子、丁丑、戊寅、辛卯、壬辰、癸巳、丙午、丁未、戊申、辛酉、壬戌、癸亥之一者，即为阴差阳错日。", "阴差阳错主婚姻不顺，夫妻不和，家道不宁。男命逢之，主外家凌替；女命逢之，主夫家败亡。大运流年逢之，多有家宅不宁之事。"),
-    "四废" to ShenshaInfo("四废", "主一生谋事无成，进退无据，多败少成。", "春庚申辛酉，夏壬子癸亥，秋甲寅乙卯，冬丙午丁巳。", "以日柱查。春三月（寅卯辰月）生人见庚申、辛酉；夏三月生人见壬子、癸亥；秋三月生人见甲寅、乙卯；冬三月生人见丙午、丁巳。", "四废为五行死绝之地，主一生谋事无成，进退无据，多败少成。命带四废者，事业上难有大成，多挫折和反复。"),
-    "丧门" to ShenshaInfo("丧门", "主孝丧之事，多主家中长辈有灾。", "子寅辰午申戌年见辰，丑卯巳未酉亥年见戌。", "以年支查岁前十二神：年日支前两位为丧门。子年见寅，丑年见卯，寅年见辰，卯年见巳，辰年见午，巳年见未，午年见申，未年见酉，申年见戌，酉年见亥，戌年见子，亥年见丑。", "丧门为凶星，主孝丧之事。如大运、流年遇之，再加上八字组合不好，往往会有灾祸发生，多主长辈有灾或家庭变故。"),
-    "吊客" to ShenshaInfo("吊客", "主孝服哭泣之事，多主亲属有丧。", "子寅辰午申戌年见戌，丑卯巳未酉亥年见辰。", "以年支查岁前十二神：年日支后两位为吊客。子年见戌，丑年见亥，寅年见子，卯年见丑，辰年见寅，巳年见卯，午年见辰，未年见巳，申年见午，酉年见未，戌年见申，亥年见酉。", "吊客为凶星，主孝服哭泣之事。与丧门相似，多主亲属有丧。大运流年逢之，须防家人健康问题或亲属变故。"),
-    "披麻" to ShenshaInfo("披麻", "主孝服、家宅不宁、亲人灾病。", "子见酉，丑见戌，寅见亥，卯见子，辰见丑，巳见寅，未见辰，申见巳，酉见午，戌见未，亥见申。", "以年支或日支查，年日支后三位为披麻。子年见酉，丑年见戌，寅年见亥，卯年见子，辰年见丑，巳年见寅，午年见卯，未年见辰，申年见巳，酉年见午，戌年见未，亥年见申。", "披麻为凶星，与丧门、吊客同，皆主孝服丧事。如大运、流年遇之，多主人身意外、伤病等事，不易聚财，须防亲人灾病。"),
-    "十灵" to ShenshaInfo("十灵", "主聪明伶俐，有悟性，易通灵性，与玄学有缘。", "甲辰乙亥丙辰丁酉戊寅己未庚戌辛丑壬寅癸未十日。", "以日柱查。日柱为甲辰、乙亥、丙辰、丁酉、戊寅、己未、庚戌、辛丑、壬寅、癸未之一者，即为十灵日。", "十灵日为神煞中的吉日，命带十灵日者，聪明伶俐，有悟性，灵性较强，易与玄学、神秘事物结缘。十灵日与十恶大败相对，吉凶各异。")
-)
+@Composable
+private fun rememberShenshaMap(): Map<String, ShenshaInfo> {
+    val context = LocalContext.current
+    return remember {
+        try {
+            val text = context.assets.open("shensha.json").bufferedReader().readText()
+            val entries = appJson.decodeFromString<List<ShenshaInfo>>(text)
+            entries.associateBy { it.name }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+}
 
 /** 以日干为基准计算某天干的十神（返回全名）。 */
 private fun getShishen(targetGan: String, dayGan: String): String {
@@ -2452,6 +2435,247 @@ private fun rememberRiganMap(): Map<String, Map<Int, RiganContent>> {
                 }
         } catch (_: Exception) {
             emptyMap()
+        }
+    }
+}
+
+@Serializable
+private data class NayinEntry(val name: String, val tip: String, val book1: String, val book2: String, val book3: String)
+
+@Composable
+private fun rememberNayinMap(): Map<String, NayinEntry> {
+    val context = LocalContext.current
+    return remember {
+        try {
+            val text = context.assets.open("nayin.json").bufferedReader().readText()
+            val entries = appJson.decodeFromString<List<NayinEntry>>(text)
+            entries.associateBy { it.name }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+}
+
+@Composable
+private fun NayinDetailDialog(entry: NayinEntry, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = entry.name,
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Color(0xFF1A1A1A),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "×",
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clickable { onDismiss() }
+                            .padding(4.dp),
+                        color = Color(0xFF888888),
+                        fontSize = 22.sp,
+                        lineHeight = 22.sp
+                    )
+                }
+                Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFE0E0E0)))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("问真精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.tip, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("《渊海子平》", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.book1, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("《三命通会》", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.book2, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("《李虚中命书》", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.book3, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NayinTableRow(
+    nayinNames: List<String>,
+    nayinMap: Map<String, NayinEntry>,
+    background: Color,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    onNayinClick: (String) -> Unit
+) {
+    Row(modifier = Modifier.height(38.dp)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxSize()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("纳音:", color = DarkText, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        }
+        nayinNames.forEach { name ->
+            val clickable = nayinMap.containsKey(name)
+            Box(
+                modifier = Modifier
+                    .width(cellWidth)
+                    .fillMaxSize()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .then(if (clickable) Modifier.clickable { onNayinClick(name) } else Modifier)
+                    .padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = name,
+                    color = DarkText,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    textDecoration = if (clickable) TextDecoration.Underline else TextDecoration.None
+                )
+            }
+        }
+    }
+}
+
+@Serializable
+private data class ShishenDetailEntry(val name: String, val tip: String, val gujue: String, val shishen: String)
+
+@Composable
+private fun rememberShishenDetailMap(): Map<String, ShishenDetailEntry> {
+    val context = LocalContext.current
+    return remember {
+        try {
+            val text = context.assets.open("shishen_detail.json").bufferedReader().readText()
+            val entries = appJson.decodeFromString<List<ShishenDetailEntry>>(text)
+            entries.associateBy { it.name }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+}
+
+@Composable
+private fun ShishenDetailDialog2(entry: ShishenDetailEntry, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = entry.name,
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Color(0xFF1A1A1A),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "×",
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clickable { onDismiss() }
+                            .padding(4.dp),
+                        color = Color(0xFF888888),
+                        fontSize = 22.sp,
+                        lineHeight = 22.sp
+                    )
+                }
+                Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFE0E0E0)))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("问真精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.tip, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("古决", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.gujue, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("十神功能", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.shishen, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShishenGodTableRow(
+    godNames: List<String>,
+    shishenMap: Map<String, ShishenDetailEntry>,
+    background: Color,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    onGodClick: (String) -> Unit
+) {
+    Row(modifier = Modifier.height(38.dp)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxSize()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("十神:", color = DarkText, fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        }
+        godNames.forEach { name ->
+            val clickable = shishenMap.containsKey(name)
+            Box(
+                modifier = Modifier
+                    .width(cellWidth)
+                    .fillMaxSize()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .then(if (clickable) Modifier.clickable { onGodClick(name) } else Modifier)
+                    .padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = name,
+                    color = DarkText,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    textDecoration = if (clickable) TextDecoration.Underline else TextDecoration.None
+                )
+            }
         }
     }
 }
@@ -3023,6 +3247,7 @@ private fun SmallLuckBlock(result: BaziResponse) {
 @Composable
 private fun ShenshaTableRow(
     shenshaPerColumn: List<List<String>>,
+    shenshaMap: Map<String, ShenshaInfo>,
     background: Color,
     labelWidth: Dp,
     cellWidth: Dp,
@@ -3055,7 +3280,7 @@ private fun ShenshaTableRow(
                     Text("—", color = DarkGray, fontSize = 12.sp, textAlign = TextAlign.Center)
                 } else {
                     names.forEach { name ->
-                        val known = SHENSHA_DATA.containsKey(name)
+                        val known = shenshaMap.containsKey(name)
                         Text(
                             text = name,
                             color = DarkText,
