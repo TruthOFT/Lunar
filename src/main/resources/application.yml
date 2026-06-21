@@ -55,9 +55,6 @@ knife4j:
   setting:
     language: zh_cn
 
-deepseek:
-  api-key: ${DEEPSEEK_API_KEY:}
-  base-url: https://api.deepseek.com
-  model: deepseek-v4-flash
-  connect-timeout: 10000
-  read-timeout: 90000
+coze:
+  api-token: ${COZE_API_TOKEN:pat_zkWBZwOde1h3fhu22jmnQUVJyEKBXXBISJ0djmrDqMZIerpEpTtlQQqhD6p4QgHS}
+  bot-id: "7557753448406646820"

@@ -74,6 +74,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lunar.data.AuthSession
@@ -303,7 +305,7 @@ fun BaziResultScreen(
     var showNotebookDialog by rememberSaveable(result.birthTime) { mutableStateOf(false) }
     var noteList by remember { mutableStateOf<List<NoteItem>>(emptyList()) }
     var noteListLoading by remember { mutableStateOf(false) }
-    var draftNote by rememberSaveable(result.birthTime) { mutableStateOf("") }
+
     val buttonWidth = 88.dp
     val buttonHeight = 44.dp
     val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
@@ -384,21 +386,22 @@ fun BaziResultScreen(
         FourPillarNotebookDialog(
             notes = noteList,
             isLoading = noteListLoading,
-            note = draftNote,
-            onNoteChange = { draftNote = it },
-            onSave = { eventTime, content ->
+            onSave = { content ->
                 if (content.isNotBlank()) {
                     val session = authSession
                     if (session != null) {
                         scope.launch {
-                            runCatching {
-                                saveNote(session.token, NoteCreateRequest(result.birthTime, eventTime, content))
-                            }.onSuccess { saved ->
-                                noteList = noteList + saved
+                            runCatching { clearNotes(session.token, result.birthTime) }
+                            val lines = content.split("\n").filter { it.isNotBlank() }
+                            val newList = mutableListOf<NoteItem>()
+                            lines.forEach { line ->
+                                runCatching {
+                                    saveNote(session.token, NoteCreateRequest(result.birthTime, "", line))
+                                }.onSuccess { saved -> newList.add(saved) }
                             }
+                            noteList = newList
                         }
                     }
-                    draftNote = ""
                 }
                 showNotebookDialog = false
             },
@@ -410,11 +413,9 @@ fun BaziResultScreen(
                         noteList = emptyList()
                     }
                 }
-                draftNote = ""
                 showNotebookDialog = false
             },
             onDismiss = {
-                draftNote = ""
                 showNotebookDialog = false
             }
         )
@@ -484,7 +485,6 @@ fun BaziResultScreen(
                 noteButtonY = y
             },
             onOpen = {
-                draftNote = ""
                 showNotebookDialog = true
             }
         )
@@ -536,95 +536,56 @@ internal fun ActivateVipDialog(
 private fun FourPillarNotebookDialog(
     notes: List<NoteItem>,
     isLoading: Boolean,
-    note: String,
-    onNoteChange: (String) -> Unit,
-    onSave: (eventTime: String, content: String) -> Unit,
+    onSave: (content: String) -> Unit,
     onClear: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val now = remember { Calendar.getInstance() }
-    var noteYear by remember { mutableStateOf(now.get(Calendar.YEAR)) }
-    var noteMonth by remember { mutableStateOf(now.get(Calendar.MONTH) + 1) }
-    var noteDay by remember { mutableStateOf(now.get(Calendar.DAY_OF_MONTH)) }
-    var noteHour by remember { mutableStateOf(now.get(Calendar.HOUR_OF_DAY)) }
+    val savedText = remember(notes) {
+        notes.joinToString("\n") { it.content }
+    }
+    var editText by remember(notes) { mutableStateOf(savedText) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("四柱记事本", color = RedTitle, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                when {
-                    isLoading -> Box(modifier = Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.Center) {
+                if (isLoading) {
+                    Box(modifier = Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), color = RedTitle)
                     }
-                    notes.isEmpty() -> Text("暂无事件记录", color = Color(0xFF777777), fontSize = 13.sp)
-                    else -> Column(
+                } else {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(140.dp)
-                            .verticalScroll(rememberScrollState())
-                            .border(1.dp, Color(0xFFE0D2BF), RoundedCornerShape(3.dp))
-                            .padding(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            .height(240.dp)
+                            .border(1.dp, Color(0xFFD0D0D0), RoundedCornerShape(3.dp))
+                            .padding(10.dp)
                     ) {
-                        notes.forEachIndexed { index, item ->
-                            Column {
-                                Text(
-                                    text = "${index + 1}. ${item.eventTime}",
-                                    color = Color(0xFF888888),
-                                    fontSize = 11.sp
-                                )
-                                Text(
-                                    text = item.content,
-                                    color = DarkText,
-                                    fontSize = 13.sp,
-                                    lineHeight = 19.sp
-                                )
-                            }
+                        if (editText.isBlank()) {
+                            Text("点击输入内容", color = Color(0xFF999999), fontSize = 14.sp)
                         }
+                        BasicTextField(
+                            value = editText,
+                            onValueChange = { editText = it },
+                            textStyle = TextStyle(color = DarkText, fontSize = 15.sp, lineHeight = 21.sp),
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
-                }
-                Text("事件时间", color = DarkText, fontSize = 14.sp)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    CompactSelect(noteYear, (1900..2100).toList(), "年") { noteYear = it }
-                    CompactSelect(noteMonth, (1..12).toList(), "月") { noteMonth = it }
-                    CompactSelect(noteDay, (1..31).toList(), "日") { noteDay = it }
-                    CompactSelect(noteHour, (0..23).toList(), "时") { noteHour = it }
-                }
-                Text("事件内容", color = DarkText, fontSize = 14.sp)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp)
-                        .border(1.dp, Color(0xFFD0D0D0), RoundedCornerShape(3.dp))
-                        .padding(10.dp)
-                ) {
-                    if (note.isBlank()) {
-                        Text("点击输入事件内容", color = Color(0xFF999999), fontSize = 14.sp)
-                    }
-                    BasicTextField(
-                        value = note,
-                        onValueChange = onNoteChange,
-                        textStyle = TextStyle(color = DarkText, fontSize = 15.sp, lineHeight = 21.sp),
-                        modifier = Modifier.fillMaxSize()
-                    )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val eventTime = "%04d-%02d-%02d %02d:00".format(noteYear, noteMonth, noteDay, noteHour)
-                onSave(eventTime, note.trim())
-            }) {
+            TextButton(onClick = { onSave(editText.trim()) }) {
                 Text("保存", color = RedTitle)
             }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onClear) {
+                TextButton(onClick = {
+                    editText = ""
+                    onClear()
+                }) {
                     Text("清空", color = DarkText)
                 }
                 TextButton(onClick = onDismiss) {
@@ -1003,10 +964,16 @@ private fun DayunDetailPanel(result: ChartResult) {
             }.joinToString("")
         )  
     }
-    val stateRow = listOf("十二长生:") + luckItems.map { it.state }
     val endYearRow = listOf("大运止于:") + luckItems.map { (it.startYear + 9).toString() }
     val liunianGzPerRow = (0..9).map { i ->
         luckItems.map { li -> ganzhiOfYear(li.startYear + i) }
+    }
+    val changshengMap = rememberChangshengMap()
+    var selectedChangsheng by remember { mutableStateOf<String?>(null) }
+    selectedChangsheng?.let { name ->
+        changshengMap[name]?.let { entry ->
+            ChangshengDetailDialog(entry = entry, onDismiss = { selectedChangsheng = null })
+        }
     }
 
     Column(
@@ -1031,7 +998,17 @@ private fun DayunDetailPanel(result: ChartResult) {
             overrideColor = RedTitle
         )
         TableRow(dzGodRow, MidGray, height = 110.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
-        TableRow(stateRow, LightGray, height = 26.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
+        ChangshengTableRow(
+            names = luckItems.map { it.state },
+            changshengMap = changshengMap,
+            background = LightGray,
+            labelWidth = labelW,
+            cellWidth = cellW,
+            height = 26.dp,
+            fontSize = fs,
+            lineHeight = lh,
+            onItemClick = { selectedChangsheng = it }
+        )
         TableRow(endYearRow, MidGray, height = 26.dp, cellWidth = cellW, labelWidth = labelW, fontSize = fs, lineHeight = lh)
         liunianGzPerRow.forEachIndexed { i, gzs ->
             GanZhiTableRow(
@@ -1077,7 +1054,7 @@ private fun CoarseChartPanel(result: ChartResult) {
     val shenshaMap = rememberShenshaMap()
     var selectedShensha by remember { mutableStateOf<String?>(null) }
     selectedShensha?.let { name ->
-        shenshaMap[name]?.let { info ->
+        findShensha(shenshaMap, name)?.let { info ->
             ShenshaDetailDialog(info = info, onDismiss = { selectedShensha = null })
         }
     }
@@ -1093,6 +1070,13 @@ private fun CoarseChartPanel(result: ChartResult) {
     selectedShishenDetail?.let { name ->
         shishenDetailMap[name]?.let { entry ->
             ShishenDetailDialog2(entry = entry, onDismiss = { selectedShishenDetail = null })
+        }
+    }
+    val changshengMap = rememberChangshengMap()
+    var selectedChangsheng by remember { mutableStateOf<String?>(null) }
+    selectedChangsheng?.let { name ->
+        changshengMap[name]?.let { entry ->
+            ChangshengDetailDialog(entry = entry, onDismiss = { selectedChangsheng = null })
         }
     }
 
@@ -2358,6 +2342,10 @@ private fun rememberShenshaMap(): Map<String, ShenshaInfo> {
     }
 }
 
+private fun findShensha(map: Map<String, ShenshaInfo>, name: String): ShenshaInfo? {
+    return map[name] ?: if (name.length >= 2) map.values.firstOrNull { it.name.startsWith(name.take(2)) } else null
+}
+
 /** 以日干为基准计算某天干的十神（返回全名）。 */
 private fun getShishen(targetGan: String, dayGan: String): String {
     val ri = TIANGAN.indexOf(dayGan)
@@ -2514,6 +2502,124 @@ private fun NayinDetailDialog(entry: NayinEntry, onDismiss: () -> Unit) {
     }
 }
 
+@Serializable
+private data class ChangshengEntry(val name: String, val shijue: String, val chafa: String)
+
+@Composable
+private fun rememberChangshengMap(): Map<String, ChangshengEntry> {
+    val context = LocalContext.current
+    return remember {
+        try {
+            val text = context.assets.open("changsheng.json").bufferedReader().readText()
+            val entries = appJson.decodeFromString<List<ChangshengEntry>>(text)
+            entries.associateBy { it.name }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+}
+
+@Composable
+private fun ChangshengDetailDialog(entry: ChangshengEntry, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White)
+        ) {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = entry.name,
+                        modifier = Modifier.align(Alignment.Center),
+                        color = Color(0xFF1A1A1A),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "×",
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clickable { onDismiss() }
+                            .padding(4.dp),
+                        color = Color(0xFF888888),
+                        fontSize = 22.sp,
+                        lineHeight = 22.sp
+                    )
+                }
+                Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFE0E0E0)))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("诗决", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.shijue, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text("查法", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(entry.chafa, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChangshengTableRow(
+    names: List<String>,
+    changshengMap: Map<String, ChangshengEntry>,
+    background: Color,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    height: Dp = 38.dp,
+    fontSize: TextUnit = 12.sp,
+    lineHeight: TextUnit = 17.sp,
+    onItemClick: (String) -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .fillMaxHeight()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("十二长生:", color = DarkText, fontSize = fontSize, textAlign = TextAlign.Center)
+        }
+        names.forEach { name ->
+            val clickable = changshengMap.containsKey(name)
+            Box(
+                modifier = Modifier
+                    .width(cellWidth)
+                    .defaultMinSize(minHeight = height)
+                    .fillMaxHeight()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .then(if (clickable) Modifier.clickable { onItemClick(name) } else Modifier)
+                    .padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = name,
+                    color = DarkText,
+                    fontSize = fontSize,
+                    lineHeight = lineHeight,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun NayinTableRow(
     nayinNames: List<String>,
@@ -2554,7 +2660,7 @@ private fun NayinTableRow(
                     lineHeight = 17.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
-                    textDecoration = if (clickable) TextDecoration.Underline else TextDecoration.None
+                    textDecoration = TextDecoration.None
                 )
             }
         }
@@ -2673,7 +2779,7 @@ private fun ShishenGodTableRow(
                     lineHeight = 17.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
-                    textDecoration = if (clickable) TextDecoration.Underline else TextDecoration.None
+                    textDecoration = TextDecoration.None
                 )
             }
         }
@@ -3170,6 +3276,13 @@ private fun EmptyLuckRows() {
 private fun DayunDetailGrid(result: BaziResponse) {
     val items = result.dayun.items
     val scroll = rememberScrollState()
+    val changshengMap = rememberChangshengMap()
+    var selectedChangsheng by remember { mutableStateOf<String?>(null) }
+    selectedChangsheng?.let { name ->
+        changshengMap[name]?.let { entry ->
+            ChangshengDetailDialog(entry = entry, onDismiss = { selectedChangsheng = null })
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -3210,11 +3323,13 @@ private fun DayunDetailGrid(result: BaziResponse) {
             cellWidth = 44.dp,
             labelWidth = 74.dp
         )
-        TableRow(
-            cells = listOf("十二长生:") + result.dayunDetail.changsheng,
+        ChangshengTableRow(
+            names = result.dayunDetail.changsheng,
+            changshengMap = changshengMap,
             background = Color.White,
+            labelWidth = 74.dp,
             cellWidth = 44.dp,
-            labelWidth = 74.dp
+            onItemClick = { selectedChangsheng = it }
         )
         TableRow(
             cells = listOf("大运止于:") + result.dayunDetail.endYear.map { it.toString() },
@@ -3280,7 +3395,7 @@ private fun ShenshaTableRow(
                     Text("—", color = DarkGray, fontSize = 12.sp, textAlign = TextAlign.Center)
                 } else {
                     names.forEach { name ->
-                        val known = shenshaMap.containsKey(name)
+                        val known = findShensha(shenshaMap, name) != null
                         Text(
                             text = name,
                             color = DarkText,
