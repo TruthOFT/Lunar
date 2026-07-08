@@ -11,4 +11,6 @@ public interface RecordService extends IService<ChartRecord> {
     RecordResponse saveRecord(Long userId, RecordSaveRequest request);
 
     List<RecordResponse> listRecords(Long userId);
+
+    void deleteRecord(Long userId, Long recordId);
 }

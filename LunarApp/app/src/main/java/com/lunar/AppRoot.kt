@@ -43,8 +43,10 @@ fun LunarAppApp() {
     var session by remember { mutableStateOf<AuthSession?>(sessionStore.load()) }
     var showLogin by rememberSaveable { mutableStateOf(false) }
     var chartResult by remember { mutableStateOf<ChartResult?>(null) }
+    var chartRecord by remember { mutableStateOf<ChartRecordItem?>(null) }
     var aiRecord by remember { mutableStateOf<ChartRecordItem?>(null) }
     var updateInfo by remember { mutableStateOf<AppVersionInfo?>(null) }
+    var userRefreshKey by remember { mutableStateOf(0) }
 
     // 切换页面时记录来路，供系统返回键回上一页
     fun navigateTo(destination: AppDestinations) {
@@ -66,7 +68,10 @@ fun LunarAppApp() {
                 pendingDestination = null
             }
             backStack.isNotEmpty() -> currentDestination = backStack.removeAt(backStack.size - 1)
-            chartResult != null -> chartResult = null
+            chartResult != null -> {
+                chartResult = null
+                chartRecord = null
+            }
         }
     }
 
@@ -126,6 +131,7 @@ fun LunarAppApp() {
                 record = activeAiRecord,
                 authSession = session,
                 onBack = { aiRecord = null },
+                onAnalysisDone = { userRefreshKey++ },
                 modifier = Modifier.padding(innerPadding)
             )
         } else if (showLogin) {
@@ -137,15 +143,29 @@ fun LunarAppApp() {
                     currentDestination = pendingDestination ?: AppDestinations.CHART
                     pendingDestination = null
                     chartResult = null
+                    chartRecord = null
                 },
                 modifier = Modifier.padding(innerPadding)
             )
         } else when (currentDestination) {
             AppDestinations.CHART -> ChartRoute(
                 result = chartResult,
+                recordId = chartRecord?.id,
                 authSession = session,
-                onResult = { chartResult = it },
-                onReset = { chartResult = null },
+                onResult = {
+                    chartResult = it
+                    chartRecord = null
+                },
+                onReset = {
+                    chartResult = null
+                    chartRecord = null
+                },
+                onRecordDeleted = {
+                    chartResult = null
+                    chartRecord = null
+                    userRefreshKey++
+                    currentDestination = AppDestinations.RECORD
+                },
                 onRequireLogin = {
                     pendingDestination = AppDestinations.CHART
                     showLogin = true
@@ -155,12 +175,14 @@ fun LunarAppApp() {
 
             AppDestinations.RECORD -> RecordScreen(
                 authSession = session,
+                refreshKey = userRefreshKey,
                 onRequireLogin = {
                     pendingDestination = AppDestinations.RECORD
                     showLogin = true
                 },
-                onOpenRecord = { result ->
+                onOpenRecord = { record, result ->
                     chartResult = result
+                    chartRecord = record
                     showLogin = false
                     navigateTo(AppDestinations.CHART)
                 },
@@ -173,6 +195,8 @@ fun LunarAppApp() {
 
             AppDestinations.MINE -> MineScreen(
                 authSession = session,
+                refreshKey = userRefreshKey,
+                onUserChanged = { userRefreshKey++ },
                 onRequireLogin = {
                     pendingDestination = AppDestinations.MINE
                     showLogin = true
@@ -191,6 +215,7 @@ fun LunarAppApp() {
                     showLogin = false
                     currentDestination = AppDestinations.MINE
                     chartResult = null
+                    chartRecord = null
                     aiRecord = null
                 },
                 modifier = Modifier.padding(innerPadding)

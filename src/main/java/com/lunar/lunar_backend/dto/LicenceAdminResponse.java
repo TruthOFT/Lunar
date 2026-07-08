@@ -4,6 +4,7 @@ public record LicenceAdminResponse(
         Long id,
         String licenceCode,
         String licenceType,
+        Integer aiCount,
         String expireTime,
         Integer status,
         String remark,

@@ -13,9 +13,12 @@ import com.lunar.lunar_backend.dto.LicenceResponse;
 import com.lunar.lunar_backend.dto.LicenceUpdateRequest;
 import com.lunar.lunar_backend.dto.LicenceVipStatus;
 import com.lunar.lunar_backend.entity.Licence;
+import com.lunar.lunar_backend.entity.LunarUser;
 import com.lunar.lunar_backend.exception.ApiException;
 import com.lunar.lunar_backend.mapper.LicenceMapper;
+import com.lunar.lunar_backend.mapper.LunarUserMapper;
 import com.lunar.lunar_backend.service.LicenceService;
+import jakarta.annotation.Resource;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -35,24 +38,37 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
     private static final int CODE_GROUPS = 4;
     private static final int CODE_GROUP_LENGTH = 4;
     private static final int MAX_GENERATE_RETRY = 10;
-    private static final String DEFAULT_LICENCE_TYPE = "vip";
+    private static final String TYPE_VIP = "vip";
+    private static final String TYPE_COUNT = "count";
     private static final String CODE_PREFIX = "LUNAR";
     private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
+    @Resource
+    private LunarUserMapper lunarUserMapper;
+
     @Override
     public List<LicenceResponse> generate(LicenceGenerateRequest request) {
         int count = validCount(request == null ? null : request.count());
-        String licenceType = defaultText(request == null ? null : request.licenceType(), DEFAULT_LICENCE_TYPE);
+        String licenceType = defaultText(request == null ? null : request.licenceType(), TYPE_VIP);
         String remark = defaultText(request == null ? null : request.remark(), "");
+        Integer aiCount = (request != null) ? request.aiCount() : null;
+
+        if (TYPE_COUNT.equals(licenceType)) {
+            if (aiCount == null || aiCount < 1) {
+                throw new ApiException(4000, "次数卡密必须指定AI分析次数（大于0）");
+            }
+        }
 
         List<LicenceResponse> result = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             Licence licence = new Licence();
             licence.setLicenceCode(nextUniqueCode());
             licence.setLicenceType(licenceType);
-            // 未激活的码永不过期，expireTime 在激活时才写入
+            if (TYPE_COUNT.equals(licenceType)) {
+                licence.setAiCount(aiCount);
+            }
             licence.setStatus(STATUS_UNUSED);
             licence.setRemark(remark);
             save(licence);
@@ -67,21 +83,44 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
             throw new ApiException(4000, "激活码不能为空");
         }
         String code = request.licenceCode().trim().toUpperCase();
-        LocalDateTime now = LocalDateTime.now();
-        boolean activated = update(new LambdaUpdateWrapper<Licence>()
-                .set(Licence::getUserId, userId)
-                .set(Licence::getStatus, STATUS_USED)
-                // 激活时才确定会员到期时间：当前时间 + 30 天
-                .set(Licence::getExpireTime, now.plusDays(VIP_DURATION_DAYS))
+
+        Licence licence = getOne(new LambdaQueryWrapper<Licence>()
                 .eq(Licence::getLicenceCode, code)
                 .eq(Licence::getStatus, STATUS_UNUSED)
                 .isNull(Licence::getUserId)
-                .eq(Licence::getIsDelete, 0));
-        if (!activated) {
+                .eq(Licence::getIsDelete, 0)
+                .last("limit 1"));
+
+        if (licence == null) {
             throw new ApiException(4000, "激活码无效或已被使用");
         }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        if (TYPE_COUNT.equals(licence.getLicenceType())) {
+            // 次数卡密：给用户加AI次数
+            int addCount = licence.getAiCount() != null ? licence.getAiCount() : 0;
+            if (addCount <= 0) {
+                throw new ApiException(4000, "该卡密次数无效");
+            }
+            lunarUserMapper.update(null,
+                    new LambdaUpdateWrapper<LunarUser>()
+                            .eq(LunarUser::getId, userId)
+                            .setSql("aiRemainCount = aiRemainCount + " + addCount)
+            );
+        } else {
+            // VIP卡密：设置过期时间
+            licence.setExpireTime(now.plusDays(VIP_DURATION_DAYS));
+        }
+
+        licence.setUserId(userId);
+        licence.setStatus(STATUS_USED);
+        updateById(licence);
+
         LicenceVipStatus vipStatus = currentVipStatus(userId);
-        return new LicenceActivateResponse(vipStatus.isVip(), vipStatus.vipExpireTime(), vipStatus.licenceType());
+        LunarUser user = lunarUserMapper.selectById(userId);
+        int remainCount = (user != null && user.getAiRemainCount() != null) ? user.getAiRemainCount() : 0;
+        return new LicenceActivateResponse(vipStatus.isVip(), vipStatus.vipExpireTime(), vipStatus.licenceType(), remainCount);
     }
 
     @Override
@@ -96,6 +135,7 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
         LocalDateTime latestExpireTime = null;
         String licenceType = "";
         for (Licence licence : licences) {
+            if (TYPE_COUNT.equals(licence.getLicenceType())) continue;
             LocalDateTime memberExpireTime = licence.getExpireTime();
             if (memberExpireTime == null || !memberExpireTime.isAfter(now)) {
                 continue;
@@ -191,6 +231,7 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
                 licence.getId(),
                 licence.getLicenceCode(),
                 licence.getLicenceType(),
+                licence.getAiCount(),
                 licence.getExpireTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getExpireTime()),
                 licence.getStatus(),
                 licence.getRemark(),
@@ -203,6 +244,7 @@ public class LicenceServiceImpl extends ServiceImpl<LicenceMapper, Licence> impl
                 licence.getId(),
                 licence.getLicenceCode(),
                 licence.getLicenceType(),
+                licence.getAiCount(),
                 licence.getExpireTime() == null ? "" : DATE_TIME_FORMATTER.format(licence.getExpireTime()),
                 licence.getStatus(),
                 licence.getRemark(),

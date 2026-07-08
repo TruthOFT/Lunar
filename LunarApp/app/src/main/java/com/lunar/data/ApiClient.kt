@@ -8,8 +8,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -29,9 +31,10 @@ import retrofit2.http.Query
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 
-private const val BACKEND_BASE_URL = "http://192.168.31.70:7000/"
+private const val BACKEND_BASE_URL = "http://38.175.194.200:7000/"
 private const val BAZI_BASE_URL = "http://www.lanxingai.space/"
 
 object AuthTokenHolder {
@@ -107,6 +110,9 @@ interface BackendApi {
     @GET("api/records")
     suspend fun listRecords(): ApiResponse<List<ChartRecordItem>>
 
+    @DELETE("api/records/{id}")
+    suspend fun deleteRecord(@Path("id") id: Long): ApiResponse<Unit?>
+
     @POST("api/ai/analyze")
     suspend fun analyze(@Body request: AiAnalyzeRequest): ApiResponse<String>
 
@@ -115,6 +121,9 @@ interface BackendApi {
 
     @GET("api/app/version/latest")
     suspend fun getLatestVersion(): ApiResponse<AppVersionInfo>
+
+    @GET("api/dict/name-wuxing")
+    suspend fun getNameWuxing(@Query("name") name: String): ApiResponse<NameWuxingInfo>
 
     @POST("api/notes")
     suspend fun saveNote(@Body request: NoteCreateRequest): ApiResponse<NoteItem>
@@ -169,6 +178,11 @@ suspend fun fetchChartRecords(token: String): List<ChartRecordItem> {
     return backendApi.listRecords().requireData()
 }
 
+suspend fun deleteChartRecord(token: String, id: Long) {
+    AuthTokenHolder.token = token
+    backendApi.deleteRecord(id).requireSuccess()
+}
+
 suspend fun analyzeChartRecord(token: String, request: AiAnalyzeRequest): String {
     AuthTokenHolder.token = token
     return backendApi.analyze(request).requireData()
@@ -176,31 +190,80 @@ suspend fun analyzeChartRecord(token: String, request: AiAnalyzeRequest): String
 
 fun analyzeChartRecordStream(token: String, request: AiAnalyzeRequest): Flow<String> = callbackFlow {
     val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
         .build()
+    val receivedContent = AtomicBoolean(false)
+    val finished = AtomicBoolean(false)
+    val fallbackActive = AtomicBoolean(false)
     val body = appJson.encodeToString(request)
         .toRequestBody("application/json; charset=utf-8".toMediaType())
     val httpRequest = Request.Builder()
         .url(BACKEND_BASE_URL + "api/ai/analyze/stream")
         .post(body)
         .addHeader("Authorization", "Bearer $token")
+        .addHeader("Accept", "text/event-stream")
+        .addHeader("Cache-Control", "no-cache")
         .build()
     val eventSource = EventSources.createFactory(client).newEventSource(
         httpRequest,
         object : EventSourceListener() {
-            override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
-                trySend(data)
+            override fun onOpen(es: EventSource, response: Response) {
+                trySend("")
             }
+
+            override fun onEvent(es: EventSource, id: String?, type: String?, data: String) {
+                when (type) {
+                    "ready" -> trySend("")
+                    "done" -> {
+                        finished.set(true)
+                        close()
+                    }
+                    "error" -> {
+                        finished.set(true)
+                        close(ApiBusinessException(0, data.ifBlank { "AI分析请求失败" }))
+                    }
+                    else -> {
+                        if (data.isNotEmpty()) {
+                            receivedContent.set(true)
+                            trySend(data)
+                        }
+                    }
+                }
+            }
+
             override fun onClosed(es: EventSource) {
+                if (fallbackActive.get()) return
+                finished.set(true)
                 close()
             }
+
             override fun onFailure(es: EventSource, t: Throwable?, response: Response?) {
+                if (fallbackActive.get()) return
+                finished.set(true)
                 close(t ?: ApiBusinessException(response?.code ?: 0, "AI分析请求失败"))
             }
         }
     )
-    awaitClose { eventSource.cancel() }
+    val fallbackJob = launch {
+        delay(20_000)
+        if (!receivedContent.get() && !finished.get()) {
+            fallbackActive.set(true)
+            eventSource.cancel()
+            runCatching { analyzeChartRecord(token, request) }
+                .onSuccess {
+                    receivedContent.set(true)
+                    if (it.isNotBlank()) trySend(it)
+                    close()
+                }
+                .onFailure { close(it) }
+        }
+    }
+    awaitClose {
+        fallbackJob.cancel()
+        eventSource.cancel()
+    }
 }
 
 suspend fun activateLicence(token: String, licenceCode: String): LicenceActivateResponse {
@@ -210,6 +273,10 @@ suspend fun activateLicence(token: String, licenceCode: String): LicenceActivate
 
 suspend fun fetchLatestVersion(): AppVersionInfo? {
     return runCatching { backendApi.getLatestVersion().data }.getOrNull()
+}
+
+suspend fun fetchNameWuxing(name: String): String {
+    return backendApi.getNameWuxing(name).requireData().display
 }
 
 suspend fun fetchNotes(token: String, birthTime: String): List<NoteItem> {
@@ -503,6 +570,12 @@ private fun <T> ApiResponse<T>.requireData(): T {
         throw ApiBusinessException(code, message)
     }
     return data ?: throw IllegalStateException("接口无响应数据")
+}
+
+private fun <T> ApiResponse<T>.requireSuccess() {
+    if (code != 0) {
+        throw ApiBusinessException(code, message)
+    }
 }
 
 fun Throwable.userMessage(): String {

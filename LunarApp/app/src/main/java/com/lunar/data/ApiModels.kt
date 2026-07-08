@@ -29,7 +29,8 @@ data class UserInfo(
     val nickname: String,
     val isVip: Boolean = false,
     val vipExpireTime: String = "",
-    val licenceType: String = ""
+    val licenceType: String = "",
+    val aiRemainCount: Int = 0
 )
 
 @Serializable
@@ -56,7 +57,9 @@ data class ChartRecordItem(
 data class AiAnalyzeRequest(
     val recordId: Long,
     val resultJson: String,
-    val force: Boolean = false
+    val force: Boolean = false,
+    val systemPrompt: String? = null,
+    val category: String? = null
 )
 
 @Serializable
@@ -68,7 +71,8 @@ data class LicenceActivateRequest(
 data class LicenceActivateResponse(
     val isVip: Boolean,
     val vipExpireTime: String,
-    val licenceType: String
+    val licenceType: String,
+    val aiRemainCount: Int = 0
 )
 
 @Serializable
@@ -101,4 +105,10 @@ data class AppVersionInfo(
     val downloadUrl: String,
     val changelog: String = "",
     val forceUpdate: Boolean = false
+)
+
+@Serializable
+data class NameWuxingInfo(
+    val name: String,
+    val display: String
 )

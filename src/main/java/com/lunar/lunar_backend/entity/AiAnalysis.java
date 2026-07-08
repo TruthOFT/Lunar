@@ -16,6 +16,8 @@ public class AiAnalysis {
 
     private Long recordId;
 
+    private String category;
+
     private String content;
 
     private LocalDateTime createTime;

@@ -80,6 +80,16 @@ public class RecordServiceImpl extends ServiceImpl<ChartRecordMapper, ChartRecor
         return records;
     }
 
+    @Override
+    public void deleteRecord(Long userId, Long recordId) {
+        ChartRecord record = getById(recordId);
+        if (record == null || !record.getUserId().equals(userId)) {
+            throw new ApiException(ErrorCode.PARAMS_ERROR);
+        }
+        removeById(recordId);
+        recordCacheService.warmCache(userId);
+    }
+
     private RecordResponse toResponse(ChartRecord record) {
         return new RecordResponse(
                 record.getId(),

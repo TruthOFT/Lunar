@@ -139,13 +139,15 @@ public class AuthServiceImpl extends ServiceImpl<LunarUserMapper, LunarUser> imp
 
     private UserResponse toUserResponse(LunarUser user) {
         LicenceVipStatus vipStatus = licenceService.currentVipStatus(user.getId());
+        int remainCount = user.getAiRemainCount() != null ? user.getAiRemainCount() : 0;
         return new UserResponse(
                 user.getId(),
                 user.getAccount(),
                 user.getNickname(),
                 vipStatus.isVip(),
                 vipStatus.vipExpireTime(),
-                vipStatus.licenceType()
+                vipStatus.licenceType(),
+                remainCount
         );
     }
 

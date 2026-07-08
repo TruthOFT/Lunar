@@ -9,7 +9,9 @@ import com.lunar.lunar_backend.service.RecordService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,5 +34,12 @@ public class RecordController {
     public ApiResponse<List<RecordResponse>> list(HttpServletRequest request) {
         AuthUser authUser = (AuthUser) request.getAttribute(AuthContext.REQUEST_ATTRIBUTE);
         return ApiResponse.success(recordService.listRecords(authUser.userId()));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable Long id, HttpServletRequest request) {
+        AuthUser authUser = (AuthUser) request.getAttribute(AuthContext.REQUEST_ATTRIBUTE);
+        recordService.deleteRecord(authUser.userId(), id);
+        return ApiResponse.success(null);
     }
 }

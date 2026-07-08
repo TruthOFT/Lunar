@@ -20,11 +20,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -72,6 +76,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.defaultMinSize
@@ -92,9 +98,11 @@ import com.lunar.data.UserInfo
 import com.lunar.data.activateLicence
 import com.lunar.data.appJson
 import com.lunar.data.clearNotes
+import com.lunar.data.deleteChartRecord
 import com.lunar.data.fetchBaziCalculate
 import com.lunar.data.fetchBaziTreeItems
 import com.lunar.data.fetchCurrentUser
+import com.lunar.data.fetchNameWuxing
 import com.lunar.data.fetchNotes
 import com.lunar.data.saveChartRecord
 import com.lunar.data.saveNote
@@ -122,9 +130,11 @@ import kotlinx.serialization.encodeToString
 @Composable
 fun ChartRoute(
     result: ChartResult?,
+    recordId: Long? = null,
     authSession: AuthSession?,
     onResult: (ChartResult) -> Unit,
     onReset: () -> Unit,
+    onRecordDeleted: () -> Unit = {},
     onRequireLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -138,8 +148,10 @@ fun ChartRoute(
     } else {
         BaziResultScreen(
             result = result,
+            recordId = recordId,
             authSession = authSession,
             onReset = onReset,
+            onRecordDeleted = onRecordDeleted,
             onRequireLogin = onRequireLogin,
             modifier = modifier
         )
@@ -159,11 +171,11 @@ fun ChartFormScreen(
     var calendarType by rememberSaveable { mutableStateOf("公历排盘") }
     var gender by rememberSaveable { mutableStateOf("女") }
     var shouldSave by rememberSaveable { mutableStateOf("保存") }
-    var year by rememberSaveable { mutableStateOf(now.get(Calendar.YEAR)) }
-    var month by rememberSaveable { mutableStateOf(now.get(Calendar.MONTH) + 1) }
-    var day by rememberSaveable { mutableStateOf(now.get(Calendar.DAY_OF_MONTH)) }
-    var hour by rememberSaveable { mutableStateOf(now.get(Calendar.HOUR_OF_DAY)) }
-    var minute by rememberSaveable { mutableStateOf(now.get(Calendar.MINUTE)) }
+    var year by rememberSaveable { mutableStateOf(1990) }
+    var month by rememberSaveable { mutableStateOf(1) }
+    var day by rememberSaveable { mutableStateOf(1) }
+    var hour by rememberSaveable { mutableStateOf(12) }
+    var minute by rememberSaveable { mutableStateOf(0) }
     var isLoading by rememberSaveable { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -173,20 +185,23 @@ fun ChartFormScreen(
             .fillMaxSize()
             .background(Color.White)
             .verticalScroll(rememberScrollState())
-            .padding(top = 28.dp, bottom = 18.dp),
+            .padding(top = 32.dp, bottom = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         PageTitle()
 
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
             FormRow(label = "命主信息:") {
-                Text("姓名:", fontSize = 13.sp, color = Color.Black)
+                Text("姓名:", fontSize = 15.sp, color = Color.Black)
                 CompactTextField(
                     value = name,
                     onValueChange = { name = it },
                     modifier = Modifier
-                        .width(160.dp)
-                        .height(25.dp)
+                        .width(180.dp)
+                        .height(32.dp)
                 )
             }
             FormRow(label = "起盘方式:") {
@@ -194,9 +209,9 @@ fun ChartFormScreen(
                 CompactRadio("农历排盘", calendarType, onSelect = { calendarType = it })
             }
             FormRow(label = "出生时间:") {
-                CompactSelect(year, (1900..2100).toList(), "年") { year = it }
-                CompactSelect(month, (1..12).toList(), "月") { month = it }
-                CompactSelect(day, (1..31).toList(), "日") { day = it }
+                CompactSelect(year, (1900..2100).toList(), "年", forceLazyPopup = true) { year = it }
+                CompactSelect(month, (1..12).toList(), "月", forceLazyPopup = true) { month = it }
+                CompactSelect(day, (1..31).toList(), "日", forceLazyPopup = true) { day = it }
             }
             FormRow(label = "") {
                 CompactSelect(hour, (0..23).toList(), "时") { hour = it }
@@ -213,7 +228,7 @@ fun ChartFormScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(28.dp))
 
         TextButton(
             onClick = {
@@ -288,8 +303,10 @@ private fun buildBirthTime(year: Int, month: Int, day: Int, hour: Int, minute: I
 @Composable
 fun BaziResultScreen(
     result: ChartResult,
+    recordId: Long? = null,
     authSession: AuthSession? = null,
     onReset: () -> Unit,
+    onRecordDeleted: () -> Unit = {},
     onRequireLogin: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -305,6 +322,8 @@ fun BaziResultScreen(
     var showNotebookDialog by rememberSaveable(result.birthTime) { mutableStateOf(false) }
     var noteList by remember { mutableStateOf<List<NoteItem>>(emptyList()) }
     var noteListLoading by remember { mutableStateOf(false) }
+    var showDeleteConfirm by rememberSaveable(recordId) { mutableStateOf(false) }
+    var isDeletingRecord by rememberSaveable(recordId) { mutableStateOf(false) }
 
     val buttonWidth = 88.dp
     val buttonHeight = 44.dp
@@ -421,6 +440,52 @@ fun BaziResultScreen(
         )
     }
 
+    if (showDeleteConfirm && recordId != null) {
+        val deletingRecordId = recordId
+        AlertDialog(
+            onDismissRequest = { if (!isDeletingRecord) showDeleteConfirm = false },
+            title = { Text("删除此记录") },
+            text = { Text("删除后记录列表里将不再显示这条排盘记录。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val session = authSession
+                        if (session == null) {
+                            showDeleteConfirm = false
+                            Toast.makeText(context, "请先登录", Toast.LENGTH_SHORT).show()
+                            onRequireLogin()
+                        } else {
+                            scope.launch {
+                                isDeletingRecord = true
+                                runCatching { deleteChartRecord(session.token, deletingRecordId) }
+                                    .onSuccess {
+                                        Toast.makeText(context, "记录已删除", Toast.LENGTH_SHORT).show()
+                                        showDeleteConfirm = false
+                                        onRecordDeleted()
+                                    }
+                                    .onFailure {
+                                        Toast.makeText(context, it.userMessage(), Toast.LENGTH_SHORT).show()
+                                    }
+                                isDeletingRecord = false
+                            }
+                        }
+                    },
+                    enabled = !isDeletingRecord
+                ) {
+                    Text(if (isDeletingRecord) "删除中" else "确认删除")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteConfirm = false },
+                    enabled = !isDeletingRecord
+                ) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -460,14 +525,33 @@ fun BaziResultScreen(
             }
 
             Spacer(modifier = Modifier.height(18.dp))
-            TextButton(
-                onClick = onReset,
-                colors = ButtonDefaults.textButtonColors(containerColor = Color(0xFFFF6565), contentColor = Color.White),
-                modifier = Modifier
-                    .width(158.dp)
-                    .height(40.dp)
-            ) {
-                Text("重新排盘", fontSize = 18.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextButton(
+                    onClick = onReset,
+                    colors = ButtonDefaults.textButtonColors(containerColor = Color(0xFFFF6565), contentColor = Color.White),
+                    modifier = Modifier
+                        .width(128.dp)
+                        .height(40.dp)
+                ) {
+                    Text("重新排盘", fontSize = 16.sp)
+                }
+                if (recordId != null) {
+                    TextButton(
+                        onClick = { showDeleteConfirm = true },
+                        enabled = !isDeletingRecord,
+                        colors = ButtonDefaults.textButtonColors(
+                            containerColor = Color(0xFF333A42),
+                            contentColor = Color.White,
+                            disabledContainerColor = Color(0xFF9E9E9E),
+                            disabledContentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .width(128.dp)
+                            .height(40.dp)
+                    ) {
+                        Text(if (isDeletingRecord) "删除中" else "删除此记录", fontSize = 16.sp)
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(12.dp))
         }
@@ -637,7 +721,7 @@ private fun ShenshaDetailDialog(info: ShenshaInfo, onDismiss: () -> Unit) {
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("问真精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Text(info.tip, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("古诀", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -1037,13 +1121,13 @@ private fun CoarseChartPanel(result: ChartResult) {
     val dayGan = result.pillars.day.gan
     val isFemale = result.gender.contains("女")
 
-    // 藏干 cell: 每个地支按 DZ_CANGGAN 展开 → "干（十神）" 多行
-    val hiddenCells = pillars.map { p ->
+    // 藏干 cell: 每个地支按 DZ_CANGGAN 展开 → (干, 十神) pairs
+    val hiddenPairs = pillars.map { p ->
         val idx = DIZHI.indexOf(p.zhi)
-        if (idx < 0) "" else DZ_CANGGAN[idx].map { ch ->
+        if (idx < 0) emptyList() else DZ_CANGGAN[idx].map { ch ->
             val g = ch.toString()
-            "$g（${getShishen(g, dayGan)}）"
-        }.joinToString("\n")
+            g to getShishen(g, dayGan)
+        }
     }
 
     // 神煞从 rawText 抽取，保留为列表方便逐项点击
@@ -1113,10 +1197,13 @@ private fun CoarseChartPanel(result: ChartResult) {
             colors = listOf(DarkText) + pillars.map { stemColor(it.zhi) },
             cellWidth = cellW, labelWidth = labelW
         )
-        TableRow(
-            cells = listOf("藏干:") + hiddenCells,
-            background = MidGray, height = 78.dp,
-            cellWidth = cellW, labelWidth = labelW
+        HiddenStemTableRow(
+            pairs = hiddenPairs,
+            shishenMap = shishenDetailMap,
+            background = MidGray,
+            labelWidth = labelW,
+            cellWidth = cellW,
+            onShishenClick = { selectedShishenDetail = it }
         )
         NayinTableRow(
             nayinNames = pillars.map { it.nayin },
@@ -1154,6 +1241,18 @@ private fun CoarseChartPanel(result: ChartResult) {
 @Composable
 private fun RawResultHeader(result: ChartResult) {
     val summary = result.summary
+    var nameWuxing by remember(result.name) { mutableStateOf("") }
+
+    LaunchedEffect(result.name) {
+        nameWuxing = ""
+        if (result.name.isNotBlank()) {
+            nameWuxing = runCatching { fetchNameWuxing(result.name) }.getOrDefault("")
+        }
+    }
+
+    val cleanedNameWuxing = nameWuxing.replace(Regex("^暂无\\s*"), "").trim()
+    val wuxingText = cleanedNameWuxing.takeIf { it.isNotBlank() } ?: summary.wuxing.summaryValue()
+
     Column(
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -1161,7 +1260,7 @@ private fun RawResultHeader(result: ChartResult) {
             "姓名：" to Color.Black,
             result.name to DarkText,
             "    五行：" to Color.Black,
-            summary.wuxing.summaryValue() to DarkText
+            wuxingText to DarkText
         )
         SummaryLine(
             "性别：" to Color.Black,
@@ -1557,6 +1656,10 @@ private fun LinkedDetailGrid(
             wenChangText = buildWenChangText(result.pillars.day.gan),
             peachBlossomText = buildPeachBlossomText(result.pillars.day.zhi),
             cutPeachText = buildCutPeachText(result.pillars.day.zhi),
+            wealthStoreText = buildWealthStoreText(
+                result.pillars.day.gan,
+                listOf(result.pillars.year.zhi, result.pillars.month.zhi, result.pillars.day.zhi, result.pillars.hour.zhi)
+            ),
             riganGeneral = riganGeneral,
             riganGeneralOriginal = riganGeneralOriginal,
             riganMonthOriginal = riganMonthOriginal,
@@ -1612,6 +1715,7 @@ private fun TimelineRows(
     wenChangText: String,
     peachBlossomText: String,
     cutPeachText: String,
+    wealthStoreText: String,
     riganGeneral: String,
     riganGeneralOriginal: String,
     riganMonthOriginal: String,
@@ -1763,7 +1867,8 @@ private fun TimelineRows(
             zhenFaItems = listOf(
                 "文昌阵" to wenChangText,
                 "姻缘桃花阵" to peachBlossomText,
-                "斩桃花阵" to cutPeachText
+                "斩桃花阵" to cutPeachText,
+                "旺财阵" to wealthStoreText
             ),
             background = Color.White,
             labelWidth = timelineLabelWidth,
@@ -1956,6 +2061,66 @@ private fun buildPeachBlossomText(dayZhi: String): String {
         "花瓶（含粉水晶+桃花枝2枝+心仪对象照片）：置于$position",
         "五行灯：颜色$color，放花瓶旁边"
     ).joinToString("\n")
+}
+
+private val DAY_WEALTH_STORE_MAP = mapOf(
+    "甲" to "戌", "乙" to "戌",
+    "丙" to "丑", "丁" to "丑",
+    "戊" to "辰", "己" to "辰",
+    "庚" to "未", "辛" to "未",
+    "壬" to "戌", "癸" to "丑"
+)
+
+private val COIN_COUNT_MAP = mapOf(
+    "辰" to 16, "戌" to 50, "丑" to 49, "未" to 38
+)
+
+private val STORE_POSITION_MAP = mapOf(
+    "辰" to "东南方位", "戌" to "西北靠西墙面", "丑" to "东北方位", "未" to "西南方位"
+)
+
+private fun buildWealthStoreText(dayGan: String, allBranches: List<String>): String {
+    val stem = dayGan.trim().take(1)
+    val userStore = DAY_WEALTH_STORE_MAP[stem] ?: return "日干缺失，无法计算旺财阵"
+    val position = STORE_POSITION_MAP[userStore] ?: "未知方位"
+    val coinNum = COIN_COUNT_MAP[userStore] ?: 0
+    val hasNativeStore = userStore in allBranches
+
+    val safeBoxColor = when (userStore) {
+        "辰" -> "绿色（水库，木属性）"
+        "戌" -> "棕色/黄色（火土库，土属性）"
+        "丑" -> "金色/白色（金库，金属性）"
+        "未" -> "绿色/青色（木库，木属性）"
+        else -> "棕色"
+    }
+
+    val lines = mutableListOf<String>()
+    lines.add("【本命财库】${userStore}库")
+    lines.add("【原局自带财库】${if (hasNativeStore) "是 ✓" else "否 ✗"}")
+    lines.add("")
+    lines.add("══ 长效补财库阵法 ══")
+    lines.add("（永久通用，全年可摆放）")
+    lines.add("摆放方位：住宅${position}")
+    lines.add("房间方位：同财库对应方位（房间小太极）")
+    lines.add("保险柜颜色：${safeBoxColor}")
+    lines.add("硬币数量：${coinNum}枚全新一元硬币")
+    lines.add("硬币规则：纯色大红布完整包裹后放入柜内")
+    lines.add("功能：提升存钱、守财能力，改善财来财去存不住的问题")
+    lines.add("")
+    lines.add("══ 短期开财库阵法 ══")
+    lines.add("（仅流年刑冲害财库时可用）")
+    lines.add("摆放方位：住宅${position}")
+    lines.add("工具：棕色土属性风水保险柜")
+    lines.add("硬币数量：50枚")
+    lines.add("操作时间：戌时 19:00-21:00")
+    lines.add("操作规则：每3~5天打开保险柜10分钟，完成后立即关闭柜门")
+    lines.add("")
+    lines.add("══ 禁忌须知 ══")
+    lines.add("• 理想状态：日主、财星、食伤能量维持40~60分区间")
+    lines.add("• 保险柜不可正对入户大门、横梁下方、卫生间旁")
+    lines.add("• 多行善化解口舌官非，暴富易招人嫉妒")
+    lines.add("• 墓库默认闭合，仅流年刑冲迫害时自然开库吸纳财气")
+    return lines.joinToString("\n")
 }
 
 private fun buildCutPeachText(dayZhi: String): String {
@@ -2485,7 +2650,7 @@ private fun NayinDetailDialog(entry: NayinEntry, onDismiss: () -> Unit) {
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("问真精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Text(entry.tip, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("《渊海子平》", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -2725,7 +2890,7 @@ private fun ShishenDetailDialog2(entry: ShishenDetailEntry, onDismiss: () -> Uni
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("问真精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("精评", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Text(entry.tip, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("古决", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -2733,6 +2898,59 @@ private fun ShishenDetailDialog2(entry: ShishenDetailEntry, onDismiss: () -> Uni
                     Spacer(modifier = Modifier.height(2.dp))
                     Text("十神功能", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Text(entry.shishen, color = Color(0xFF1A1A1A), fontSize = 14.sp, lineHeight = 22.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HiddenStemTableRow(
+    pairs: List<List<Pair<String, String>>>,
+    shishenMap: Map<String, ShishenDetailEntry>,
+    background: Color,
+    labelWidth: Dp,
+    cellWidth: Dp,
+    onShishenClick: (String) -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(labelWidth)
+                .defaultMinSize(minHeight = 78.dp)
+                .fillMaxHeight()
+                .background(background)
+                .border(0.5.dp, Color.White)
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("藏干:", color = DarkText, fontSize = 12.sp, textAlign = TextAlign.Center)
+        }
+        pairs.forEach { ganList ->
+            Column(
+                modifier = Modifier
+                    .width(cellWidth)
+                    .defaultMinSize(minHeight = 78.dp)
+                    .fillMaxHeight()
+                    .background(background)
+                    .border(0.5.dp, Color.White)
+                    .padding(horizontal = 2.dp, vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                ganList.forEach { (gan, god) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = "$gan（", color = DarkText, fontSize = 12.sp, lineHeight = 18.sp)
+                        val clickable = shishenMap.containsKey(god)
+                        Text(
+                            text = god,
+                            color = DarkText,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            modifier = if (clickable) Modifier.clickable { onShishenClick(god) } else Modifier
+                        )
+                        Text(text = "）", color = DarkText, fontSize = 12.sp, lineHeight = 18.sp)
+                    }
                 }
             }
         }
@@ -2813,24 +3031,24 @@ private fun FormRow(label: String, content: @Composable RowScope.() -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(24.dp),
+            .height(36.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             modifier = Modifier
-                .width(84.dp)
+                .width(94.dp)
                 .fillMaxSize()
                 .background(LabelYellow),
             contentAlignment = Alignment.CenterStart
         ) {
-            Text(label, fontSize = 12.sp, color = Color.Black, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+            Text(label, fontSize = 14.sp, color = Color.Black, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 6.dp))
         }
         Row(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxSize()
                 .background(FormGreen)
-                .padding(start = 2.dp),
+                .padding(start = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start,
             content = content
@@ -2848,11 +3066,11 @@ private fun CompactTextField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
-        textStyle = TextStyle(fontSize = 13.sp, color = Color.Black),
+        textStyle = TextStyle(fontSize = 15.sp, color = Color.Black),
         modifier = modifier
             .background(Color.White)
             .border(1.dp, Color(0xFF777777))
-            .padding(horizontal = 4.dp, vertical = 3.dp)
+            .padding(horizontal = 6.dp, vertical = 5.dp)
     )
 }
 
@@ -2865,7 +3083,7 @@ private fun CompactRadio(
     Row(
         modifier = Modifier
             .clickable { onSelect(label) }
-            .padding(end = 2.dp),
+            .padding(end = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(
@@ -2875,9 +3093,9 @@ private fun CompactRadio(
                 selectedColor = Color(0xFF0079E6),
                 unselectedColor = Color.Black
             ),
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(24.dp)
         )
-        Text(label, fontSize = 13.sp, color = Color.Black)
+        Text(label, fontSize = 14.sp, color = Color.Black)
     }
 }
 
@@ -2886,35 +3104,93 @@ private fun CompactSelect(
     value: Int,
     options: List<Int>,
     suffix: String,
+    forceLazyPopup: Boolean = false,
     onSelect: (Int) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val selectedIndex = options.indexOf(value)
+    val useLazyPopup = forceLazyPopup || options.size > 80
+    val scrollState = rememberScrollState()
+    val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex.coerceAtLeast(0))
+    val itemHeight = 48.dp
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { itemHeight.roundToPx() }
+    val popupOffsetY = with(density) { 30.dp.roundToPx() }
+
+    LaunchedEffect(expanded, selectedIndex, useLazyPopup) {
+        if (expanded && selectedIndex >= 0) {
+            if (useLazyPopup) {
+                lazyListState.scrollToItem(selectedIndex)
+            } else {
+                scrollState.scrollTo(selectedIndex * itemHeightPx)
+            }
+        }
+    }
+
     Box {
         Row(
             modifier = Modifier
-                .padding(end = 5.dp)
-                .height(24.dp)
+                .padding(end = 6.dp)
+                .height(30.dp)
                 .border(1.dp, Color(0xFF555555))
                 .background(Color.White)
                 .clickable { expanded = true }
-                .padding(horizontal = 5.dp),
+                .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("$value$suffix", color = Color.Black, fontSize = 12.sp)
-            Text("▼", color = Color.Black, fontSize = 8.sp, modifier = Modifier.padding(start = 3.dp))
+            Text("$value$suffix", color = Color.Black, fontSize = 14.sp)
+            Text("▼", color = Color.Black, fontSize = 9.sp, modifier = Modifier.padding(start = 4.dp))
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            options.forEach { item ->
-                DropdownMenuItem(
-                    text = { Text("$item$suffix", fontSize = 13.sp) },
-                    onClick = {
-                        onSelect(item)
-                        expanded = false
+        if (useLazyPopup) {
+            if (expanded) {
+                Popup(
+                    alignment = Alignment.TopStart,
+                    offset = IntOffset(0, popupOffsetY),
+                    onDismissRequest = { expanded = false },
+                    properties = PopupProperties(focusable = true)
+                ) {
+                    LazyColumn(
+                        state = lazyListState,
+                        modifier = Modifier
+                            .width(96.dp)
+                            .height(240.dp)
+                            .background(Color.White)
+                            .border(1.dp, Color(0xFFE0E0E0))
+                    ) {
+                        items(options) { item ->
+                            DropdownMenuItem(
+                                text = { Text("$item$suffix", fontSize = 13.sp) },
+                                modifier = Modifier.height(itemHeight),
+                                onClick = {
+                                    onSelect(item)
+                                    expanded = false
+                                }
+                            )
+                        }
                     }
-                )
+                }
+            }
+        } else {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 240.dp)
+                        .verticalScroll(scrollState)
+                ) {
+                    options.forEach { item ->
+                        DropdownMenuItem(
+                            text = { Text("$item$suffix", fontSize = 13.sp) },
+                            modifier = Modifier.height(itemHeight),
+                            onClick = {
+                                onSelect(item)
+                                expanded = false
+                            }
+                        )
+                    }
+                }
             }
         }
     }

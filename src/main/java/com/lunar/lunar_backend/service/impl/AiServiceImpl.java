@@ -2,28 +2,34 @@ package com.lunar.lunar_backend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.coze.openapi.client.chat.CreateChatReq;
-import com.coze.openapi.client.chat.model.ChatEvent;
-import com.coze.openapi.client.chat.model.ChatEventType;
-import com.coze.openapi.client.connversations.message.model.Message;
-import com.coze.openapi.service.auth.TokenAuth;
-import com.coze.openapi.service.config.Consts;
-import com.coze.openapi.service.service.CozeAPI;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lunar.lunar_backend.common.ErrorCode;
 import com.lunar.lunar_backend.dto.AiAnalyzeRequest;
 import com.lunar.lunar_backend.entity.AiAnalysis;
 import com.lunar.lunar_backend.exception.ApiException;
 import com.lunar.lunar_backend.mapper.AiAnalysisMapper;
+import com.lunar.lunar_backend.dto.LicenceVipStatus;
+import com.lunar.lunar_backend.entity.LunarUser;
+import com.lunar.lunar_backend.mapper.LunarUserMapper;
 import com.lunar.lunar_backend.service.AiService;
-import io.reactivex.Flowable;
-import jakarta.annotation.PostConstruct;
+import com.lunar.lunar_backend.service.LicenceService;
 import jakarta.annotation.Resource;
-import java.util.Collections;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -32,162 +38,278 @@ public class AiServiceImpl implements AiService {
     @Resource
     private AiAnalysisMapper aiAnalysisMapper;
 
-    @Value("${coze.api-token:}")
-    private String apiToken;
+    @Resource
+    private LunarUserMapper lunarUserMapper;
 
-    @Value("${coze.bot-id:}")
-    private String botId;
+    @Resource
+    private LicenceService licenceService;
 
-    private CozeAPI cozeApi;
+    @Value("${deepseek.api-key:}")
+    private String apiKey;
 
-    @PostConstruct
-    public void initCoze() {
-        if (StringUtils.hasText(apiToken)) {
-            cozeApi = new CozeAPI.Builder()
-                    .baseURL(Consts.COZE_CN_BASE_URL)
-                    .auth(new TokenAuth(apiToken))
-                    .readTimeout(120000)
-                    .build();
-            log.info("Coze API initialized: botId={}", botId);
-        } else {
-            log.warn("Coze API token not configured");
-        }
-    }
+    @Value("${deepseek.model:deepseek-chat}")
+    private String model;
+
+    @Value("${deepseek.base-url:https://api.deepseek.com}")
+    private String baseUrl;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private static final Map<String, String> CATEGORY_PROMPTS = Map.ofEntries(
+            Map.entry("总览", AiPrompts.OVERVIEW),
+            Map.entry("财运", AiPrompts.WEALTH),
+            Map.entry("事业", AiPrompts.CAREER),
+            Map.entry("学业", AiPrompts.STUDY),
+            Map.entry("姻缘", AiPrompts.MARRIAGE),
+            Map.entry("运势", AiPrompts.FORTUNE),
+            Map.entry("流年", AiPrompts.YEAR_FORTUNE),
+            Map.entry("健康", AiPrompts.HEALTH)
+    );
 
     @Override
-    public String analyze(AiAnalyzeRequest request) {
+    public String analyze(Long userId, AiAnalyzeRequest request) {
         if (request == null || !StringUtils.hasText(request.resultJson())) {
             throw new ApiException(ErrorCode.CHART_RESULT_EMPTY);
         }
-        if (cozeApi == null) {
+        if (!StringUtils.hasText(apiKey)) {
             throw new ApiException(ErrorCode.AI_CONFIG_MISSING);
         }
 
+        String category = normalizeCategory(request.category());
+        boolean isVip = checkAiPermission(userId);
+
         if (request.recordId() != null && !Boolean.TRUE.equals(request.force())) {
-            AiAnalysis cached = getCached(request.recordId());
-            if (cached != null) {
-                return cached.getContent();
-            }
+            AiAnalysis cached = getCached(request.recordId(), category);
+            if (cached != null) return cached.getContent();
+        }
+
+        // 非VIP，发请求前立即扣次数
+        if (!isVip) {
+            deductAiCount(userId);
         }
 
         try {
-            CreateChatReq req = CreateChatReq.builder()
-                    .botID(botId)
-                    .userID("backend-user")
-                    .messages(Collections.singletonList(
-                            Message.buildUserQuestionText(userPrompt(request.resultJson()))
-                    ))
+            String prompt = buildUserPrompt(category, request.systemPrompt(), request.resultJson());
+            String sysPrompt = CATEGORY_PROMPTS.get(category);
+            String body = buildRequestBody(sysPrompt, prompt, false);
+
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(300, TimeUnit.SECONDS)
                     .build();
 
-            StringBuilder accumulated = new StringBuilder();
-            Flowable<ChatEvent> resp = cozeApi.chat().stream(req);
-            resp.blockingForEach(event -> {
-                if (ChatEventType.CONVERSATION_MESSAGE_DELTA.equals(event.getEvent())) {
-                    String content = event.getMessage().getContent();
-                    if (content != null && !content.isEmpty()) {
-                        accumulated.append(content);
-                    }
-                }
-            });
+            Request httpRequest = new Request.Builder()
+                    .url(baseUrl + "/chat/completions")
+                    .post(RequestBody.create(body, MediaType.parse("application/json")))
+                    .addHeader("Authorization", "Bearer " + apiKey)
+                    .addHeader("Content-Type", "application/json")
+                    .build();
 
-            String result = accumulated.toString();
-            if (result.isEmpty()) {
-                throw new ApiException(ErrorCode.AI_ANALYZE_FAILED);
+            try (Response response = client.newCall(httpRequest).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new ApiException(ErrorCode.AI_ANALYZE_FAILED, "DeepSeek返回错误: " + response.code());
+                }
+                String responseBody = response.body().string();
+                JsonNode root = MAPPER.readTree(responseBody);
+                String result = root.path("choices").path(0).path("message").path("content").asText();
+                if (!StringUtils.hasText(result)) {
+                    throw new ApiException(ErrorCode.AI_ANALYZE_FAILED);
+                }
+                if (request.recordId() != null) saveCache(request.recordId(), category, result);
+                return result;
             }
-            if (request.recordId() != null) {
-                saveCache(request.recordId(), result);
-            }
-            return result;
-        } catch (ApiException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            log.error("Coze analyze failed", exception);
-            throw new ApiException(ErrorCode.AI_ANALYZE_FAILED, "AI分析失败：" + exception.getMessage());
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("DeepSeek analyze failed", e);
+            throw new ApiException(ErrorCode.AI_ANALYZE_FAILED, "AI分析失败：" + e.getMessage());
         }
     }
 
     @Override
-    public void analyzeStream(AiAnalyzeRequest request, SseEmitter emitter) {
+    public void analyzeStream(Long userId, AiAnalyzeRequest request, SseEmitter emitter) {
+        sendEvent(emitter, "ready", "");
         if (request == null || !StringUtils.hasText(request.resultJson())) {
-            emitter.completeWithError(new ApiException(ErrorCode.CHART_RESULT_EMPTY));
+            completeWithError(emitter, new ApiException(ErrorCode.CHART_RESULT_EMPTY));
             return;
         }
-        if (cozeApi == null) {
-            emitter.completeWithError(new ApiException(ErrorCode.AI_CONFIG_MISSING));
+        if (!StringUtils.hasText(apiKey)) {
+            completeWithError(emitter, new ApiException(ErrorCode.AI_CONFIG_MISSING));
             return;
         }
 
+        boolean isVip;
+        try {
+            isVip = checkAiPermission(userId);
+        } catch (ApiException e) {
+            completeWithError(emitter, e);
+            return;
+        }
+
+        String category = normalizeCategory(request.category());
+
         if (request.recordId() != null && !Boolean.TRUE.equals(request.force())) {
-            AiAnalysis cached = getCached(request.recordId());
+            AiAnalysis cached = getCached(request.recordId(), category);
             if (cached != null) {
                 try {
                     String content = cached.getContent();
                     int chunkSize = 200;
                     for (int i = 0; i < content.length(); i += chunkSize) {
-                        emitter.send(content.substring(i, Math.min(i + chunkSize, content.length())));
+                        sendEvent(emitter, "message", content.substring(i, Math.min(i + chunkSize, content.length())));
                     }
+                    sendEvent(emitter, "done", "");
                     emitter.complete();
                 } catch (Exception e) {
-                    try { emitter.completeWithError(e); } catch (Exception ignored) {}
+                    completeWithError(emitter, e);
                 }
                 return;
             }
         }
 
+        // 非VIP，发请求前立即扣次数
+        if (!isVip) {
+            deductAiCount(userId);
+        }
+
         try {
-            CreateChatReq req = CreateChatReq.builder()
-                    .botID(botId)
-                    .userID("backend-user")
-                    .messages(Collections.singletonList(
-                            Message.buildUserQuestionText(userPrompt(request.resultJson()))
-                    ))
+            String prompt = buildUserPrompt(category, request.systemPrompt(), request.resultJson());
+            String sysPrompt = CATEGORY_PROMPTS.get(category);
+            String body = buildRequestBody(sysPrompt, prompt, true);
+
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(300, TimeUnit.SECONDS)
+                    .build();
+
+            Request httpRequest = new Request.Builder()
+                    .url(baseUrl + "/chat/completions")
+                    .post(RequestBody.create(body, MediaType.parse("application/json")))
+                    .addHeader("Authorization", "Bearer " + apiKey)
+                    .addHeader("Content-Type", "application/json")
                     .build();
 
             StringBuilder accumulated = new StringBuilder();
-            Flowable<ChatEvent> resp = cozeApi.chat().stream(req);
-            resp.blockingForEach(event -> {
-                if (ChatEventType.CONVERSATION_MESSAGE_DELTA.equals(event.getEvent())) {
-                    String content = event.getMessage().getContent();
-                    if (content != null && !content.isEmpty()) {
-                        emitter.send(content);
-                        accumulated.append(content);
+            try (Response response = client.newCall(httpRequest).execute()) {
+                if (!response.isSuccessful()) {
+                    completeWithError(emitter, new ApiException(ErrorCode.AI_ANALYZE_FAILED, "DeepSeek返回错误: " + response.code()));
+                    return;
+                }
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body().byteStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.startsWith("data: ")) {
+                            String data = line.substring(6).trim();
+                            if ("[DONE]".equals(data)) break;
+                            try {
+                                JsonNode node = MAPPER.readTree(data);
+                                String chunk = node.path("choices").path(0).path("delta").path("content").asText(null);
+                                if (StringUtils.hasText(chunk)) {
+                                    sendEvent(emitter, "message", chunk);
+                                    accumulated.append(chunk);
+                                }
+                            } catch (Exception ignored) {}
+                        }
                     }
                 }
-            });
+            }
+            sendEvent(emitter, "done", "");
             emitter.complete();
             if (request.recordId() != null && !accumulated.isEmpty()) {
-                saveCache(request.recordId(), accumulated.toString());
+                saveCache(request.recordId(), category, accumulated.toString());
             }
         } catch (Exception e) {
-            log.error("Coze stream failed", e);
-            try { emitter.completeWithError(e); } catch (Exception ignored) {}
+            log.error("DeepSeek stream failed", e);
+            completeWithError(emitter, e);
         }
     }
 
-    private AiAnalysis getCached(Long recordId) {
-        return aiAnalysisMapper.selectOne(
-                new LambdaQueryWrapper<AiAnalysis>().eq(AiAnalysis::getRecordId, recordId)
+    private void sendEvent(SseEmitter emitter, String name, String data) {
+        try {
+            emitter.send(SseEmitter.event().name(name).data(data == null ? "" : data));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void completeWithError(SseEmitter emitter, Exception e) {
+        try {
+            sendEvent(emitter, "error", e.getMessage());
+        } catch (Exception ignored) {
+        }
+        try {
+            emitter.completeWithError(e);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private String buildRequestBody(String systemPrompt, String userPrompt, boolean stream) throws Exception {
+        var messages = new com.fasterxml.jackson.databind.node.ArrayNode(MAPPER.getNodeFactory());
+        if (StringUtils.hasText(systemPrompt)) {
+            var sysMsg = MAPPER.createObjectNode();
+            sysMsg.put("role", "system");
+            sysMsg.put("content", systemPrompt);
+            messages.add(sysMsg);
+        }
+        var userMsg = MAPPER.createObjectNode();
+        userMsg.put("role", "user");
+        userMsg.put("content", userPrompt);
+        messages.add(userMsg);
+
+        var root = MAPPER.createObjectNode();
+        root.put("model", model);
+        root.set("messages", messages);
+        root.put("stream", stream);
+        return MAPPER.writeValueAsString(root);
+    }
+
+    private String buildUserPrompt(String category, String systemPrompt, String resultJson) {
+        return "请分析下面的四柱八字排盘结果：\n" + resultJson;
+    }
+
+    private boolean checkAiPermission(Long userId) {
+        LicenceVipStatus vipStatus = licenceService.currentVipStatus(userId);
+        if (Boolean.TRUE.equals(vipStatus.isVip())) return true;
+        LunarUser user = lunarUserMapper.selectById(userId);
+        if (user != null && user.getAiRemainCount() != null && user.getAiRemainCount() > 0) return false;
+        throw new ApiException(4030, "VIP已过期或AI次数已用完，请激活卡密");
+    }
+
+    private void deductAiCount(Long userId) {
+        lunarUserMapper.update(null,
+                new LambdaUpdateWrapper<LunarUser>()
+                        .eq(LunarUser::getId, userId)
+                        .gt(LunarUser::getAiRemainCount, 0)
+                        .setSql("aiRemainCount = aiRemainCount - 1")
         );
     }
 
-    private void saveCache(Long recordId, String content) {
-        AiAnalysis existing = getCached(recordId);
+    private String normalizeCategory(String category) {
+        return StringUtils.hasText(category) ? category : "总览";
+    }
+
+    private AiAnalysis getCached(Long recordId, String category) {
+        return aiAnalysisMapper.selectOne(
+                new LambdaQueryWrapper<AiAnalysis>()
+                        .eq(AiAnalysis::getRecordId, recordId)
+                        .eq(AiAnalysis::getCategory, category)
+        );
+    }
+
+    private void saveCache(Long recordId, String category, String content) {
+        AiAnalysis existing = getCached(recordId, category);
         if (existing != null) {
             aiAnalysisMapper.update(null,
                     new LambdaUpdateWrapper<AiAnalysis>()
                             .eq(AiAnalysis::getRecordId, recordId)
+                            .eq(AiAnalysis::getCategory, category)
                             .set(AiAnalysis::getContent, content)
             );
         } else {
             AiAnalysis entity = new AiAnalysis();
             entity.setRecordId(recordId);
+            entity.setCategory(category);
             entity.setContent(content);
             aiAnalysisMapper.insert(entity);
         }
-    }
-
-    private String userPrompt(String resultJson) {
-        return "请分析下面这个四柱八字排盘结果 JSON，输出：1. 基础格局 2. 五行强弱 3. 性格倾向 "
-                + "4. 事业财运 5. 感情家庭 6. 流年提醒。JSON：\n" + resultJson;
     }
 }

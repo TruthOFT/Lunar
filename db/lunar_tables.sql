@@ -29,3 +29,27 @@ CREATE TABLE IF NOT EXISTS `chart_record` (
   KEY `idx_userId_createTime` (`userId`, `createTime`),
   KEY `idx_isDelete` (`isDelete`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='排盘记录表';
+
+CREATE TABLE IF NOT EXISTS `ai_analysis` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `recordId` bigint NOT NULL COMMENT '排盘记录id',
+  `category` varchar(32) NOT NULL DEFAULT '总览' COMMENT '分析类别',
+  `content` longtext NOT NULL COMMENT 'AI分析内容',
+  `createTime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updateTime` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `isDelete` tinyint NOT NULL DEFAULT 0 COMMENT '是否删除 0否 1是',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_record_category` (`recordId`, `category`),
+  KEY `idx_isDelete` (`isDelete`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI分析缓存表';
+
+-- 已有表增加category字段
+ALTER TABLE `ai_analysis` ADD COLUMN `category` varchar(32) NOT NULL DEFAULT '总览' COMMENT '分析类别' AFTER `recordId`;
+-- ALTER TABLE `ai_analysis` DROP INDEX `uk_record_category`;
+ALTER TABLE `ai_analysis` ADD UNIQUE KEY `uk_record_category` (`recordId`, `category`);
+
+-- 用户表增加AI剩余次数
+ALTER TABLE `lunar_user` ADD COLUMN `aiRemainCount` int NOT NULL DEFAULT 0 COMMENT 'AI分析剩余次数' AFTER `role`;
+
+-- 卡密表增加次数字段
+ALTER TABLE `licence` ADD COLUMN `aiCount` int NULL DEFAULT NULL COMMENT 'AI分析次数(次数卡密用)' AFTER `licenceType`;

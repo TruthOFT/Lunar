@@ -51,7 +51,7 @@ onMounted(loadData)
 const showGenModal = ref(false)
 const genLoading = ref(false)
 const genFormRef = ref()
-const genForm = reactive({ count: 1, licenceType: 'vip', remark: '' })
+const genForm = reactive({ count: 1, licenceType: 'vip', aiCount: 10, remark: '' })
 
 async function handleGenerate() {
   try {
@@ -61,14 +61,18 @@ async function handleGenerate() {
   }
   genLoading.value = true
   try {
-    const res = await generateLicences({
+    const payload: Record<string, unknown> = {
       count: genForm.count,
       licenceType: genForm.licenceType || 'vip',
       remark: genForm.remark || undefined,
-    })
+    }
+    if (genForm.licenceType === 'count') {
+      payload.aiCount = genForm.aiCount
+    }
+    const res = await generateLicences(payload as any)
     message.success(`成功生成 ${res.length} 张卡密`)
     showGenModal.value = false
-    Object.assign(genForm, { count: 1, licenceType: 'vip', remark: '' })
+    Object.assign(genForm, { count: 1, licenceType: 'vip', aiCount: 10, remark: '' })
     pagination.current = 1
     loadData()
   } catch (e: unknown) {
@@ -137,7 +141,7 @@ function logout() {
 const columns = [
   { title: 'ID', dataIndex: 'id', width: 70, fixed: 'left' as const },
   { title: '卡密码', dataIndex: 'licenceCode', key: 'licenceCode', width: 230 },
-  { title: '类型', dataIndex: 'licenceType', key: 'licenceType', width: 80 },
+  { title: '类型', dataIndex: 'licenceType', key: 'licenceType', width: 120 },
   { title: '会员到期时间', dataIndex: 'expireTime', key: 'expireTime', width: 155 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 95 },
   { title: '激活用户', dataIndex: 'userId', key: 'userId', width: 90 },
@@ -274,7 +278,9 @@ const columns = [
 
             <!-- Type -->
             <template v-else-if="column.key === 'licenceType'">
-              <a-tag color="purple">{{ record.licenceType }}</a-tag>
+              <a-tag :color="record.licenceType === 'count' ? 'blue' : 'purple'">
+                {{ record.licenceType === 'count' ? `次数(${record.aiCount ?? 0})` : 'VIP' }}
+              </a-tag>
             </template>
 
             <!-- Status -->
@@ -345,12 +351,26 @@ const columns = [
           <a-form-item
             label="类型"
             name="licenceType"
-            :rules="[{ required: true, message: '请输入类型' }]"
+            :rules="[{ required: true, message: '请选择类型' }]"
           >
-            <a-input v-model:value="genForm.licenceType" placeholder="vip" />
+            <a-select
+              v-model:value="genForm.licenceType"
+              :options="[
+                { value: 'vip', label: 'VIP（时长）' },
+                { value: 'count', label: '次数（AI分析）' },
+              ]"
+            />
           </a-form-item>
         </a-col>
       </a-row>
+      <a-form-item
+        v-if="genForm.licenceType === 'count'"
+        label="AI分析次数"
+        name="aiCount"
+        :rules="[{ required: true, type: 'number', min: 1, message: '至少1次' }]"
+      >
+        <a-input-number v-model:value="genForm.aiCount" :min="1" :max="9999" style="width: 100%" placeholder="每张卡密包含的AI分析次数" />
+      </a-form-item>
       <a-form-item label="备注" name="remark">
         <a-input v-model:value="genForm.remark" placeholder="可选" />
       </a-form-item>

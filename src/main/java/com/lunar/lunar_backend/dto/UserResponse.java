@@ -6,6 +6,7 @@ public record UserResponse(
         String nickname,
         Boolean isVip,
         String vipExpireTime,
-        String licenceType
+        String licenceType,
+        Integer aiRemainCount
 ) {
 }

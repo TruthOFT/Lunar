@@ -48,6 +48,8 @@ fun MineScreen(
     onRequireLogin: () -> Unit,
     onLoginInvalid: () -> Unit,
     onLogout: () -> Unit,
+    onUserChanged: () -> Unit = {},
+    refreshKey: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -60,7 +62,7 @@ fun MineScreen(
     var activateCode by remember { mutableStateOf("") }
     var isActivating by remember { mutableStateOf(false) }
 
-    LaunchedEffect(authSession?.token, reloadKey) {
+    LaunchedEffect(authSession?.token, reloadKey, refreshKey) {
         val session = authSession
         currentUser = null
         errorMessage = null
@@ -108,6 +110,7 @@ fun MineScreen(
                                 activateCode = ""
                                 showActivateDialog = false
                                 reloadKey++
+                                onUserChanged()
                             }
                             .onFailure {
                                 Toast.makeText(context, it.userMessage(), Toast.LENGTH_SHORT).show()
@@ -203,13 +206,20 @@ private fun UserBlock(user: UserInfo, onLogout: () -> Unit, onActivateVip: () ->
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     modifier = Modifier.height(26.dp)
                 ) {
-                    Text("激活 VIP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (user.aiRemainCount > 0) "增加次数" else "激活卡密",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
         Spacer(modifier = Modifier.height(14.dp))
         if (user.isVip) {
             InfoLine(label = "VIP 到期时间", value = user.vipExpireTime)
+        }
+        if (!user.isVip && user.aiRemainCount > 0) {
+            InfoLine(label = "AI分析剩余次数", value = "${user.aiRemainCount} 次")
         }
         Spacer(modifier = Modifier.height(24.dp))
         PrimaryButton(text = "退出登录", onClick = onLogout, color = RedTitle)

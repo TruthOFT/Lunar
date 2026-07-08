@@ -24,6 +24,8 @@ public class LunarUser {
 
     private Integer role;
 
+    private Integer aiRemainCount;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

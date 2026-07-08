@@ -20,6 +20,8 @@ public class Licence {
 
     private String licenceType;
 
+    private Integer aiCount;
+
     private LocalDateTime expireTime;
 
     private Integer status;

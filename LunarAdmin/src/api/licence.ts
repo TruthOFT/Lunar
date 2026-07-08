@@ -3,6 +3,7 @@ import { request } from '@/request'
 export interface LicenceGenerateRequest {
   count?: number
   licenceType?: string
+  aiCount?: number
   remark?: string
 }
 
@@ -20,6 +21,7 @@ export interface LicenceAdminItem {
   id: number
   licenceCode: string
   licenceType: string
+  aiCount: number | null
   expireTime: string
   status: number
   remark: string
